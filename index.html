@@ -298,8 +298,11 @@
       <section class="visual">
         <div class="card chart-card">
           <div class="chart-head">
-            <h2>Carta solar estereografica</h2>
-            <p><strong>Cidade:</strong> <span id="cidade-display">Sao Paulo</span> | <strong>Latitude:</strong> <span id="lat-display">-23.55°</span></p>
+            <div>
+              <h2>Carta solar estereografica</h2>
+              <p><strong>Cidade:</strong> <span id="cidade-display">Sao Paulo</span> | <strong>Latitude:</strong> <span id="lat-display">-23.55°</span></p>
+            </div>
+            <button class="export-button" id="download-solar-chart" type="button" data-export-ignore>Baixar imagem</button>
           </div>
           <div class="chart-canvas-slot">
             <canvas id="solar-canvas" width="860" height="860" aria-label="Carta solar"></canvas>

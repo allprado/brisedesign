@@ -37,6 +37,8 @@ const refs = {
   latDisplay: document.getElementById("lat-display"),
   resumo: document.getElementById("resumo"),
   canvas: document.getElementById("solar-canvas"),
+  chartCard: document.querySelector(".chart-card"),
+  downloadSolarChart: document.getElementById("download-solar-chart"),
 
   openWindowShadow: document.getElementById("open-window-shadow"),
   windowShadowModal: document.getElementById("window-shadow-modal"),
@@ -746,6 +748,183 @@ function closeWindowShadowModal() {
   refs.windowShadowModal.setAttribute("aria-hidden", "true");
 }
 
+function getSafeFilePart(value) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase() || "carta-solar";
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function getRelativeRect(element, parentRect) {
+  const rect = element.getBoundingClientRect();
+  return {
+    x: rect.left - parentRect.left,
+    y: rect.top - parentRect.top,
+    w: rect.width,
+    h: rect.height
+  };
+}
+
+function drawRoundedRect(context, x, y, width, height, radius) {
+  const r = Math.min(radius, width / 2, height / 2);
+  context.beginPath();
+  context.moveTo(x + r, y);
+  context.lineTo(x + width - r, y);
+  context.quadraticCurveTo(x + width, y, x + width, y + r);
+  context.lineTo(x + width, y + height - r);
+  context.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+  context.lineTo(x + r, y + height);
+  context.quadraticCurveTo(x, y + height, x, y + height - r);
+  context.lineTo(x, y + r);
+  context.quadraticCurveTo(x, y, x + r, y);
+  context.closePath();
+}
+
+function setTextStyle(context, element, weightOverride = "") {
+  const style = window.getComputedStyle(element);
+  const weight = weightOverride || style.fontWeight;
+  context.fillStyle = style.color;
+  context.font = `${weight} ${style.fontSize} ${style.fontFamily}`;
+  context.textBaseline = "top";
+}
+
+function drawElementText(context, element, parentRect, weightOverride = "") {
+  const rect = getRelativeRect(element, parentRect);
+  setTextStyle(context, element, weightOverride);
+  context.fillText(element.innerText.trim(), rect.x, rect.y);
+}
+
+function drawExportCardBackground(context, width, height) {
+  const style = window.getComputedStyle(refs.chartCard);
+  const radius = parseFloat(style.borderRadius) || 16;
+
+  context.fillStyle = style.backgroundColor || "#fffdfa";
+  drawRoundedRect(context, 0.5, 0.5, width - 1, height - 1, radius);
+  context.fill();
+  context.strokeStyle = style.borderColor || "#d7cec0";
+  context.lineWidth = 1;
+  context.stroke();
+}
+
+function drawExportSolarCanvas(context, parentRect) {
+  const canvasRect = getRelativeRect(refs.canvas, parentRect);
+
+  context.save();
+  drawRoundedRect(context, canvasRect.x, canvasRect.y, canvasRect.w, canvasRect.h, 14);
+  context.clip();
+  context.fillStyle = "#fff8f0";
+  context.fillRect(canvasRect.x, canvasRect.y, canvasRect.w, canvasRect.h);
+  context.drawImage(refs.canvas, canvasRect.x, canvasRect.y, canvasRect.w, canvasRect.h);
+  context.restore();
+
+  context.strokeStyle = "#d4c6b3";
+  context.lineWidth = 1;
+  drawRoundedRect(context, canvasRect.x, canvasRect.y, canvasRect.w, canvasRect.h, 14);
+  context.stroke();
+}
+
+function drawExportLegend(context, parentRect) {
+  const legend = refs.chartCard.querySelector(".legend");
+  const legendStyle = window.getComputedStyle(legend);
+
+  context.font = `${legendStyle.fontWeight} ${legendStyle.fontSize} ${legendStyle.fontFamily}`;
+  context.textBaseline = "top";
+  context.fillStyle = legendStyle.color;
+
+  legend.querySelectorAll("div").forEach((item) => {
+    const itemRect = getRelativeRect(item, parentRect);
+    const swatch = item.querySelector(".swatch");
+    const swatchRect = getRelativeRect(swatch, parentRect);
+    const swatchStyle = window.getComputedStyle(swatch);
+
+    context.fillStyle = swatchStyle.backgroundColor;
+    context.fillRect(swatchRect.x, swatchRect.y, swatchRect.w, swatchRect.h);
+    context.fillStyle = legendStyle.color;
+    context.fillText(item.textContent.trim(), itemRect.x + 24, itemRect.y);
+  });
+}
+
+function drawSummaryTextLine(context, line, x, y, style) {
+  const colonIndex = line.indexOf(":");
+
+  if (colonIndex > 0 && !line.startsWith("Observacao")) {
+    const label = line.slice(0, colonIndex + 1);
+    const value = line.slice(colonIndex + 1);
+    context.font = `700 ${style.fontSize} ${style.fontFamily}`;
+    context.fillText(label, x, y);
+    const labelWidth = context.measureText(label).width;
+    context.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    context.fillText(value, x + labelWidth + 4, y);
+    return;
+  }
+
+  context.font = line.startsWith("Observacao")
+    ? `italic ${style.fontSize} ${style.fontFamily}`
+    : `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+  context.fillText(line, x, y);
+}
+
+function drawExportSummary(context, parentRect) {
+  const summary = refs.resumo;
+  const rect = getRelativeRect(summary, parentRect);
+  const style = window.getComputedStyle(summary);
+  const lineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.35;
+
+  context.strokeStyle = "#d5c3a9";
+  context.setLineDash([3, 3]);
+  context.beginPath();
+  context.moveTo(rect.x, rect.y);
+  context.lineTo(rect.x + rect.w, rect.y);
+  context.stroke();
+  context.setLineDash([]);
+
+  context.fillStyle = style.color;
+  summary.innerText.split("\n").forEach((line, index) => {
+    drawSummaryTextLine(context, line.trim(), rect.x, rect.y + 10 + index * lineHeight, style);
+  });
+}
+
+function downloadSolarChartImage() {
+  render();
+
+  const state = getState();
+  const cardRect = refs.chartCard.getBoundingClientRect();
+  const width = Math.ceil(cardRect.width);
+  const height = Math.ceil(cardRect.height);
+  const scale = 2;
+  const exportCanvas = document.createElement("canvas");
+  const exportCtx = exportCanvas.getContext("2d");
+
+  exportCanvas.width = width * scale;
+  exportCanvas.height = height * scale;
+  exportCtx.scale(scale, scale);
+  drawExportCardBackground(exportCtx, width, height);
+  drawElementText(exportCtx, refs.chartCard.querySelector(".chart-head h2"), cardRect);
+  drawElementText(exportCtx, refs.chartCard.querySelector(".chart-head p"), cardRect);
+  drawExportSolarCanvas(exportCtx, cardRect);
+  drawExportLegend(exportCtx, cardRect);
+  drawExportSummary(exportCtx, cardRect);
+
+  exportCanvas.toBlob((blob) => {
+    if (!blob) return;
+    const today = new Date().toISOString().slice(0, 10);
+    downloadBlob(blob, `carta-solar-${getSafeFilePart(state.local.cidade)}-${today}.png`);
+  }, "image/png");
+}
+
 function resizeCanvasForDpr() {
   const dpr = window.devicePixelRatio || 1;
   const slot = refs.canvas.parentElement;
@@ -834,6 +1013,7 @@ function bindInputs() {
 
   window.addEventListener("resize", render);
 
+  refs.downloadSolarChart.addEventListener("click", downloadSolarChartImage);
   refs.openWindowShadow.addEventListener("click", openWindowShadowModal);
   refs.closeWindowShadow.addEventListener("click", closeWindowShadowModal);
   refs.windowShadowModal.addEventListener("click", (event) => {
