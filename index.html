@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BriseLab - Analise de Eficiencia de Brises</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="bg-orb orb-a"></div>
+  <div class="bg-orb orb-b"></div>
+  <main class="app-shell">
+    <header class="topbar">
+      <div>
+        <h1>BriseLab</h1>
+        <p>Analise da eficiencia de brises solares em janelas</p>
+      </div>
+      <div class="chip">Carta solar estereografica + mascaras em tempo real</div>
+    </header>
+
+    <section class="layout">
+      <aside class="controls" aria-label="Parametros de entrada">
+        <section class="card">
+          <h2>1) Local e orientacao</h2>
+          <label>
+            Selecione uma capital ou personalize
+            <select id="capital-selector">
+              <option value="custom">Personalizada</option>
+              <option value="-23.55:-46.64:Sao Paulo" selected>São Paulo, SP</option>
+              <option value="-22.91:-43.17:Rio de Janeiro">Rio de Janeiro, RJ</option>
+              <option value="-15.78:-47.93:Brasilia">Brasília, DF</option>
+              <option value="-12.97:-38.51:Salvador">Salvador, BA</option>
+              <option value="-25.43:-49.27:Curitiba">Curitiba, PR</option>
+              <option value="-30.03:-51.23:Porto Alegre">Porto Alegre, RS</option>
+              <option value="-19.92:-43.94:Belo Horizonte">Belo Horizonte, MG</option>
+              <option value="-3.72:-38.52:Fortaleza">Fortaleza, CE</option>
+              <option value="-8.05:-34.88:Recife">Recife, PE</option>
+              <option value="-5.79:-35.21:Natal">Natal, RN</option>
+              <option value="-7.12:-34.86:Joao Pessoa">João Pessoa, PB</option>
+              <option value="-9.66:-35.74:Maceio">Maceió, AL</option>
+              <option value="-10.95:-37.07:Aracaju">Aracaju, SE</option>
+              <option value="-1.45:-48.48:Belem">Belém, PA</option>
+              <option value="-3.10:-60.02:Manaus">Manaus, AM</option>
+              <option value="-0.04:-51.06:Macapa">Macapá, AP</option>
+              <option value="2.82:-60.67:Boa Vista">Boa Vista, RR</option>
+              <option value="-9.97:-67.81:Rio Branco">Rio Branco, AC</option>
+              <option value="-8.76:-63.90:Porto Velho">Porto Velho, RO</option>
+              <option value="-15.60:-56.10:Cuiaba">Cuiabá, MT</option>
+              <option value="-20.44:-54.65:Campo Grande">Campo Grande, MS</option>
+              <option value="-10.18:-48.33:Palmas">Palmas, TO</option>
+              <option value="-5.09:-42.80:Teresina">Teresina, PI</option>
+              <option value="-2.53:-44.30:Sao Luis">São Luís, MA</option>
+              <option value="-27.59:-48.55:Florianopolis">Florianópolis, SC</option>
+              <option value="-20.32:-40.34:Vitoria">Vitória, ES</option>
+            </select>
+          </label>
+          <div class="grid two">
+            <label>
+              Cidade
+              <input id="cidade" type="text" value="Sao Paulo" />
+            </label>
+            <label>
+              Latitude (graus)
+              <input id="latitude" type="number" step="0.01" min="-90" max="90" value="-23.55" />
+            </label>
+          </div>
+          <label>
+            Orientacao da fachada (azimute, 0° = Norte)
+            <input id="orientacao" type="range" min="0" max="359" step="1" value="0" />
+          </label>
+          <div class="range-readout"><span id="orientacao-texto">0°</span></div>
+        </section>
+
+        <section class="card">
+          <h2>2) Janela</h2>
+          <div class="grid two">
+            <label>
+              Largura da janela (m)
+              <input id="janela-largura" type="number" min="0.1" step="0.01" value="1.20" />
+            </label>
+            <label>
+              Altura da janela (m)
+              <input id="janela-altura" type="number" min="0.1" step="0.01" value="1.50" />
+            </label>
+          </div>
+          <button class="action-button" id="open-window-shadow" type="button">Vista frontal da janela</button>
+        </section>
+
+        <section class="card">
+          <h2>3) Configuracao dos brises</h2>
+          <div class="tabbar" role="tablist" aria-label="Tipos de protecao solar">
+            <button class="tab active" data-tab="tab-horizontal" role="tab" aria-selected="true">Brise Horizontal</button>
+            <button class="tab" data-tab="tab-vertical" role="tab" aria-selected="false">Brise Vertical</button>
+            <button class="tab" data-tab="tab-marquise" role="tab" aria-selected="false">Marquise</button>
+          </div>
+
+          <div class="tab-panel active" id="tab-horizontal" role="tabpanel">
+            <h3>Laminas horizontais (louvres)</h3>
+            <label class="checkbox-row"><input id="bh-ativo" type="checkbox" checked /> Ativar brise horizontal</label>
+            <div class="grid two compact">
+              <label>Numero de laminas<input id="bh-numero" type="number" min="1" step="1" value="10" /></label>
+              <label>Espacamento vertical (m)<input id="bh-espacamento" type="number" min="0" step="0.01" value="0.30" /></label>
+              <label>Angulo da lamina (°)<input id="bh-angulo" type="number" step="0.1" value="0" /></label>
+              <label>Distancia da janela (m)<input id="bh-distancia" type="number" min="0" step="0.01" value="0.50" /></label>
+              <label>Profundidade da lamina (m)<input id="bh-profundidade" type="number" min="0" step="0.01" value="0.50" /></label>
+              <label>Afastamento vertical do topo da janela (m)<input id="bh-offset-topo" type="number" min="0" step="0.01" value="0.00" /></label>
+              <label>Sobreposicao lateral na janela (m)<input id="bh-sobreposicao" type="number" min="0" step="0.01" value="0.00" /></label>
+            </div>
+            <div class="illustration">
+              <img src="assets/horizontal.png" alt="Ilustracao do brise horizontal" />
+              <svg viewBox="0 0 400 260" aria-hidden="true" hidden>
+                <defs>
+                  <linearGradient id="windowGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#b8e5f0"/>
+                    <stop offset="100%" stop-color="#6db8cc"/>
+                  </linearGradient>
+                  <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+                    <path d="M0,0 L8,4 L0,8 L2,4 z" fill="#c44520"/>
+                  </marker>
+                </defs>
+                
+                <!-- Vista lateral -->
+                <text x="10" y="18" font-weight="600" font-size="13" fill="#5a4a3f">Vista lateral (corte)</text>
+                
+                <!-- Janela -->
+                <rect x="240" y="50" width="22" height="140" fill="url(#windowGrad)" stroke="#2a5f6f" stroke-width="2.5"/>
+                <text x="268" y="125" font-size="11" fill="#1a3d46" font-weight="600">Janela</text>
+                
+                <!-- Laminas horizontais -->
+                <g id="louvers">
+                  <rect x="80" y="65" width="140" height="8" fill="#d4d4d4" stroke="#4a4a4a" stroke-width="1.8" rx="1"/>
+                  <rect x="80" y="95" width="140" height="8" fill="#d4d4d4" stroke="#4a4a4a" stroke-width="1.8" rx="1"/>
+                  <rect x="80" y="125" width="140" height="8" fill="#d4d4d4" stroke="#4a4a4a" stroke-width="1.8" rx="1"/>
+                  <rect x="80" y="155" width="140" height="8" fill="#d4d4d4" stroke="#4a4a4a" stroke-width="1.8" rx="1"/>
+                  
+                  <!-- Conexoes para janela -->
+                  <line x1="220" y1="69" x2="236" y2="62" stroke="#666" stroke-width="1.2" stroke-dasharray="2 2"/>
+                  <line x1="220" y1="99" x2="236" y2="85" stroke="#666" stroke-width="1.2" stroke-dasharray="2 2"/>
+                </g>
+                
+                <!-- Anotacao: Espacamento vertical -->
+                <line x1="55" y1="69" x2="55" y2="99" stroke="#c44520" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+                <text x="10" y="87" font-size="10" fill="#c44520" font-weight="600">Espaçamento</text>
+                <text x="18" y="98" font-size="10" fill="#c44520" font-weight="600">vertical</text>
+                
+                <!-- Anotacao: Profundidade da lamina -->
+                <line x1="80" y1="46" x2="220" y2="46" stroke="#c44520" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+                <text x="120" y="40" font-size="10" fill="#c44520" font-weight="600">Profundidade da lâmina</text>
+                
+                <!-- Anotacao: Distancia da janela -->
+                <line x1="220" y1="200" x2="240" y2="200" stroke="#2e7d32" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+                <text x="210" y="215" font-size="10" fill="#2e7d32" font-weight="600" text-anchor="end">Distância</text>
+                <text x="210" y="226" font-size="10" fill="#2e7d32" font-weight="600" text-anchor="end">da janela</text>
+                
+                <!-- Anotacao: Angulo -->
+                <path d="M 150,125 L 150,145 A 20 20 0 0 0 165,135" fill="none" stroke="#7b5e10" stroke-width="1.5"/>
+                <text x="152" y="165" font-size="10" fill="#7b5e10" font-weight="600">Ângulo</text>
+                
+                <!-- Anotacao: Afastamento do topo -->
+                <line x1="285" y1="40" x2="285" y2="50" stroke="#8e24aa" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+                <text x="292" y="48" font-size="10" fill="#8e24aa" font-weight="600">Afastamento</text>
+                <text x="292" y="58" font-size="10" fill="#8e24aa" font-weight="600">do topo</text>
+                
+                <!-- Chao/referencia -->
+                <line x1="40" y1="195" x2="380" y2="195" stroke="#8a6d3b" stroke-width="1" stroke-dasharray="4 2"/>
+              </svg>
+            </div>
+          </div>
+
+          <div class="tab-panel" id="tab-vertical" role="tabpanel">
+            <h3>Aletas laterais (sidefins)</h3>
+            <div class="grid two">
+              <div class="groupbox">
+                <h4>Lado esquerdo</h4>
+                <label class="checkbox-row"><input id="bv-esq-ativo" type="checkbox" checked /> Ativar lado esquerdo</label>
+                <label>Projecao (m)<input id="bv-esq-projecao" type="number" min="0" step="0.01" value="0.50" /></label>
+                <label>Afastamento horizontal da borda esquerda (m)<input id="bv-esq-offset" type="number" min="0" step="0.01" value="0.00" /></label>
+                <label>Sobreposicao superior (m)<input id="bv-esq-top" type="number" min="0" step="0.01" value="0.00" /></label>
+                <label>Sobreposicao inferior (m)<input id="bv-esq-bottom" type="number" min="0" step="0.01" value="0.00" /></label>
+              </div>
+              <div class="groupbox">
+                <h4>Lado direito</h4>
+                <label class="checkbox-row"><input id="bv-dir-ativo" type="checkbox" checked /> Ativar lado direito</label>
+                <label>Projecao (m)<input id="bv-dir-projecao" type="number" min="0" step="0.01" value="0.50" /></label>
+                <label>Afastamento horizontal da borda direita (m)<input id="bv-dir-offset" type="number" min="0" step="0.01" value="0.00" /></label>
+                <label>Sobreposicao superior (m)<input id="bv-dir-top" type="number" min="0" step="0.01" value="0.00" /></label>
+                <label>Sobreposicao inferior (m)<input id="bv-dir-bottom" type="number" min="0" step="0.01" value="0.00" /></label>
+              </div>
+            </div>
+            <div class="illustration">
+              <img src="assets/vertical.png" alt="Ilustracao do brise vertical" />
+              <svg viewBox="0 0 420 280" aria-hidden="true" hidden>
+                <defs>
+                  <linearGradient id="finGrad" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0%" stop-color="#a8a8a8"/>
+                    <stop offset="50%" stop-color="#d0d0d0"/>
+                    <stop offset="100%" stop-color="#888888"/>
+                  </linearGradient>
+                </defs>
+                
+                <text x="10" y="18" font-weight="600" font-size="13" fill="#5a4a3f">Vista frontal (fachada)</text>
+                
+                <!-- Aleta esquerda (perspectiva) -->
+                <polygon points="50,85 140,105 140,200 50,180" fill="url(#finGrad)" stroke="#3a3a3a" stroke-width="2.2"/>
+                <text x="60" y="225" font-size="11" fill="#3a3a3a" font-weight="600">Aleta esquerda</text>
+                
+                <!-- Aleta direita (perspectiva) -->
+                <polygon points="370,85 280,105 280,200 370,180" fill="url(#finGrad)" stroke="#3a3a3a" stroke-width="2.2"/>
+                <text x="295" y="225" font-size="11" fill="#3a3a3a" font-weight="600">Aleta direita</text>
+                
+                <!-- Janela central -->
+                <rect x="140" y="100" width="140" height="105" fill="url(#windowGrad)" stroke="#2a5f6f" stroke-width="2.8"/>
+                <text x="185" y="157" font-size="12" fill="#1a3d46" font-weight="600">Janela</text>
+                
+                <!-- Anotacao: Projecao esquerda -->
+                <line x1="50" y1="70" x2="140" y2="70" stroke="#c44520" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+                <text x="65" y="62" font-size="10" fill="#c44520" font-weight="600">Projeção</text>
+                
+                <!-- Anotacao: Afastamento horizontal esquerdo -->
+                <line x1="140" y1="250" x2="170" y2="250" stroke="#2e7d32" stroke-width="2" marker-end="url(#arrow)"/>
+                <text x="142" y="264" font-size="10" fill="#2e7d32" font-weight="600">Afastamento</text>
+                
+                <!-- Anotacao: Sobreposicao superior -->
+                <line x1="310" y1="85" x2="310" y2="100" stroke="#8e24aa" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+                <text x="316" y="94" font-size="10" fill="#8e24aa" font-weight="600">Sobrepos. sup.</text>
+                
+                <!-- Anotacao: Sobreposicao inferior -->
+                <line x1="110" y1="200" x2="110" y2="215" stroke="#ff6f00" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+                <text x="6" y="210" font-size="10" fill="#ff6f00" font-weight="600">Sobrepos. inf.</text>
+                
+                <!-- Referencias de largura da janela -->
+                <line x1="140" y1="230" x2="280" y2="230" stroke="#1565c0" stroke-width="1.5" stroke-dasharray="3 2"/>
+                <text x="180" y="243" font-size="9" fill="#1565c0" font-weight="600">Largura da janela</text>
+              </svg>
+            </div>
+          </div>
+
+          <div class="tab-panel" id="tab-marquise" role="tabpanel">
+            <h3>Marquise (sobrejanela)</h3>
+            <label class="checkbox-row"><input id="mq-ativo" type="checkbox" checked /> Ativar marquise</label>
+            <div class="grid two compact">
+              <label>Afastamento vertical do topo da janela (m)<input id="mq-offset-topo" type="number" min="0" step="0.01" value="0.00" /></label>
+              <label>Projecao (m)<input id="mq-projecao" type="number" min="0" step="0.01" value="0.50" /></label>
+              <label>Sobreposicao lateral na janela (m)<input id="mq-sobreposicao" type="number" min="0" step="0.01" value="0.00" /></label>
+            </div>
+            <div class="illustration">
+              <img src="assets/marquise.png" alt="Ilustracao da marquise" />
+              <svg viewBox="0 0 420 280" aria-hidden="true" hidden>
+                <defs>
+                  <linearGradient id="canopyGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#b8b8b8"/>
+                    <stop offset="100%" stop-color="#787878"/>
+                  </linearGradient>
+                </defs>
+                
+                <text x="10" y="18" font-weight="600" font-size="13" fill="#5a4a3f">Vista lateral (corte)</text>
+                
+                <!-- Janela -->
+                <rect x="200" y="80" width="28" height="150" fill="url(#windowGrad)" stroke="#2a5f6f" stroke-width="2.8"/>
+                <text x="235" y="160" font-size="12" fill="#1a3d46" font-weight="600">Janela</text>
+                
+                <!-- Marquise (perspectiva 3D simplificada) -->
+                <path d="M 80,80 L 340,80 L 380,110 L 120,110 Z" fill="url(#canopyGrad)" stroke="#3a3a3a" stroke-width="2.5"/>
+                <path d="M 340,80 L 380,110 L 380,115 L 340,85 Z" fill="#5a5a5a" stroke="#3a3a3a" stroke-width="1.5"/>
+                <text x="320" y="65" font-size="11" fill="#3a3a3a" font-weight="600">Marquise</text>
+                
+                <!-- Estrutura de suporte (opcional) -->
+                <line x1="200" y1="80" x2="200" y2="70" stroke="#555" stroke-width="3"/>
+                <line x1="228" y1="80" x2="228" y2="70" stroke="#555" stroke-width="3"/>
+                
+                <!-- Anotacao: Projecao -->
+                <line x1="200" y1="50" x2="340" y2="50" stroke="#c44520" stroke-width="2.5" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+                <text x="245" y="42" font-size="11" fill="#c44520" font-weight="600">Projeção</text>
+                
+                <!-- Anotacao: Afastamento vertical do topo -->
+                <line x1="165" y1="70" x2="165" y2="80" stroke="#8e24aa" stroke-width="2.5" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+                <text x="80" y="78" font-size="10" fill="#8e24aa" font-weight="600">Afastamento do topo</text>
+                
+                <!-- Anotacao: Sobreposicao lateral -->
+                <line x1="200" y1="250" x2="80" y2="250" stroke="#2e7d32" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+                <text x="105" y="242" font-size="10" fill="#2e7d32" font-weight="600">Sobreposição lateral</text>
+                
+                <!-- Linha de referencia do topo da janela -->
+                <line x1="60" y1="80" x2="180" y2="80" stroke="#1565c0" stroke-width="1" stroke-dasharray="4 2"/>
+                <text x="60" y="94" font-size="9" fill="#1565c0">Topo da janela</text>
+                
+                <!-- Solo/referencia -->
+                <line x1="40" y1="235" x2="400" y2="235" stroke="#8a6d3b" stroke-width="1" stroke-dasharray="4 2"/>
+              </svg>
+            </div>
+          </div>
+        </section>
+      </aside>
+
+      <section class="visual">
+        <div class="card chart-card">
+          <div class="chart-head">
+            <h2>Carta solar estereografica</h2>
+            <p><strong>Cidade:</strong> <span id="cidade-display">Sao Paulo</span> | <strong>Latitude:</strong> <span id="lat-display">-23.55°</span></p>
+          </div>
+          <div class="chart-canvas-slot">
+            <canvas id="solar-canvas" width="860" height="860" aria-label="Carta solar"></canvas>
+          </div>
+          <div class="legend">
+            <div><span class="swatch sw-grid"></span>Grade estereografica</div>
+            <div><span class="swatch sw-path"></span>Trajetorias solares (meses)</div>
+            <div><span class="swatch sw-hour"></span>Linhas horarias</div>
+            <div><span class="swatch sw-facade"></span>Linha da fachada</div>
+            <div><span class="swatch sw-mask"></span>Mascara de sombra dos brises</div>
+          </div>
+          <div class="summary" id="resumo"></div>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <div class="modal-backdrop" id="window-shadow-modal" aria-hidden="true">
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="window-shadow-title">
+      <header class="modal-head">
+        <div>
+          <h2 id="window-shadow-title">Vista frontal da janela</h2>
+          <p id="window-shadow-status">Ajuste data e horario para ver a sombra.</p>
+        </div>
+        <button class="icon-button" id="close-window-shadow" type="button" aria-label="Fechar">X</button>
+      </header>
+
+      <div class="window-shadow-layout">
+        <div class="window-preview-slot">
+          <canvas id="window-shadow-canvas" width="760" height="520" aria-label="Sombra projetada na janela"></canvas>
+        </div>
+
+        <div class="shadow-controls">
+          <label>
+            Data
+            <input id="shadow-date" type="range" min="1" max="365" step="1" value="172" />
+            <span class="control-readout" id="shadow-date-text">21 Jun</span>
+          </label>
+          <label>
+            Horario solar
+            <input id="shadow-time" type="range" min="5" max="19" step="0.25" value="12" />
+            <span class="control-readout" id="shadow-time-text">12:00</span>
+          </label>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
