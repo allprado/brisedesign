@@ -54,6 +54,7 @@ const refs = {
 const ctx = refs.canvas.getContext("2d");
 const shadowCtx = refs.windowShadowCanvas.getContext("2d");
 const DEG = Math.PI / 180;
+let renderFrame = 0;
 const SOLAR_MONTH_PATHS = [
   { labels: [{ text: "jun", hour: 8 }], declination: 23.44 },
   { labels: [{ text: "mai", hour: 8 }, { text: "jul", hour: 16 }], declination: 20 },
@@ -985,6 +986,14 @@ function render() {
   renderWindowShadow(state);
 }
 
+function scheduleRender() {
+  if (renderFrame) cancelAnimationFrame(renderFrame);
+  renderFrame = requestAnimationFrame(() => {
+    renderFrame = 0;
+    render();
+  });
+}
+
 function initTabs() {
   const tabs = document.querySelectorAll(".tab");
   const panels = document.querySelectorAll(".tab-panel");
@@ -1038,7 +1047,7 @@ function bindInputs() {
     refs.capitalSelector.value = "custom";
   });
 
-  window.addEventListener("resize", render);
+  window.addEventListener("resize", scheduleRender);
 
   refs.downloadSolarChart.addEventListener("click", downloadSolarChartImage);
   refs.openWindowShadow.addEventListener("click", openWindowShadowModal);
@@ -1063,7 +1072,22 @@ function initApp() {
   refs.shadowDate.value = getDayOfYear(new Date());
 }
 
+function initLayoutObservers() {
+  if ("ResizeObserver" in window) {
+    const observer = new ResizeObserver(scheduleRender);
+    observer.observe(refs.canvas.parentElement);
+    observer.observe(refs.chartCard);
+  }
+
+  window.addEventListener("load", scheduleRender);
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(scheduleRender);
+  }
+}
+
 initTabs();
 bindInputs();
 initApp();
 render();
+requestAnimationFrame(scheduleRender);
+initLayoutObservers();
