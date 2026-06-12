@@ -147,6 +147,26 @@ function solarPositionFromDecHour(latitudeDeg, declinationDeg, hourAngleDeg) {
   return { altitude, azimuth };
 }
 
+function solarPositionOnHorizon(latitudeDeg, declinationDeg, hourAngleDeg) {
+  const lat = latitudeDeg * DEG;
+  const dec = declinationDeg * DEG;
+  const h = hourAngleDeg * DEG;
+  const east = Math.cos(dec) * Math.sin(h);
+  const north = Math.cos(lat) * Math.sin(dec) - Math.sin(lat) * Math.cos(dec) * Math.cos(h);
+  const azimuth = (Math.atan2(east, north) / DEG + 360) % 360;
+
+  return { altitude: 0, azimuth };
+}
+
+function getSunriseHourAngle(latitudeDeg, declinationDeg) {
+  const lat = latitudeDeg * DEG;
+  const dec = declinationDeg * DEG;
+  const cosHourAngle = -Math.tan(lat) * Math.tan(dec);
+
+  if (cosHourAngle < -1 || cosHourAngle > 1) return null;
+  return Math.acos(clamp(cosHourAngle, -1, 1)) / DEG;
+}
+
 function sunVectorFacade(altitudeDeg, azimuthDeg, facadeAzimuthDeg) {
   const alt = altitudeDeg * DEG;
   const psi = wrap180(azimuthDeg - facadeAzimuthDeg) * DEG;
@@ -332,24 +352,31 @@ function drawSolarDatePaths(state, center, radius) {
     const labelText = path.labels.map((label) => label.text).join("-");
     const isSolstice = labelText.includes("jun") || labelText.includes("dez");
     const isEquinox = labelText.includes("mar") || labelText.includes("set");
+    const sunriseHourAngle = getSunriseHourAngle(latitude, dec);
     let started = false;
 
+    if (sunriseHourAngle === null) return;
+
     ctx.beginPath();
-    for (let h = -180; h <= 180; h += 1) {
+    const start = solarPositionOnHorizon(latitude, dec, -sunriseHourAngle);
+    const startPoint = stereographicProject(start.altitude, start.azimuth, center, radius);
+    ctx.moveTo(startPoint.x, startPoint.y);
+    started = true;
+
+    for (let h = Math.ceil(-sunriseHourAngle); h <= Math.floor(sunriseHourAngle); h += 1) {
       const pos = solarPositionFromDecHour(latitude, dec, h);
       if (!pos) continue;
       const p = stereographicProject(pos.altitude, pos.azimuth, center, radius);
-      if (!started) {
-        ctx.moveTo(p.x, p.y);
-        started = true;
-      } else {
-        ctx.lineTo(p.x, p.y);
-      }
+      ctx.lineTo(p.x, p.y);
     }
+
+    const end = solarPositionOnHorizon(latitude, dec, sunriseHourAngle);
+    const endPoint = stereographicProject(end.altitude, end.azimuth, center, radius);
+    ctx.lineTo(endPoint.x, endPoint.y);
 
     ctx.strokeStyle = isSolstice || isEquinox ? "#0f5f7a" : "#3d879f";
     ctx.lineWidth = isSolstice || isEquinox ? 1.6 : 1;
-    ctx.stroke();
+    if (started) ctx.stroke();
 
   });
 }
