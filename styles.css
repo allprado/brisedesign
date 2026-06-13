@@ -96,8 +96,12 @@ h1, h2, h3, h4 {
   letter-spacing: 0.02em;
 }
 
+.topbar h1 span {
+  color: #BA4D2D;
+}
+
 .topbar p {
-  margin: 6px 0 0;
+  margin: 2px 0 0;
   color: var(--muted);
 }
 
