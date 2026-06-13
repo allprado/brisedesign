@@ -39,6 +39,7 @@ const refs = {
   canvas: document.getElementById("solar-canvas"),
   chartCard: document.querySelector(".chart-card"),
   downloadSolarChart: document.getElementById("download-solar-chart"),
+  splashScreen: document.getElementById("splash-screen"),
 
   openWindowShadow: document.getElementById("open-window-shadow"),
   windowShadowModal: document.getElementById("window-shadow-modal"),
@@ -1085,9 +1086,17 @@ function initLayoutObservers() {
   }
 }
 
+function initSplashScreen() {
+  window.setTimeout(() => {
+    refs.splashScreen.classList.add("hidden");
+    window.setTimeout(() => refs.splashScreen.remove(), 450);
+  }, 5000);
+}
+
 initTabs();
 bindInputs();
 initApp();
 render();
 requestAnimationFrame(scheduleRender);
 initLayoutObservers();
+initSplashScreen();

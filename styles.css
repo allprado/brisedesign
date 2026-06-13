@@ -53,6 +53,80 @@ body {
   bottom: 6%;
 }
 
+.splash-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: radial-gradient(900px 520px at 70% 10%, #ffebd9 0%, transparent 58%),
+    radial-gradient(720px 420px at 12% 88%, #f0f4df 0%, transparent 55%),
+    var(--bg);
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 420ms ease, visibility 420ms ease;
+}
+
+.splash-screen.hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.splash-card {
+  width: min(420px, 100%);
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 32px 28px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+
+.splash-logo {
+  width: 132px;
+  height: 132px;
+  object-fit: contain;
+}
+
+.splash-card h1 {
+  font-size: 2rem;
+  letter-spacing: 0.02em;
+}
+
+.splash-card h1 span {
+  color: #BA4D2D;
+}
+
+.splash-card p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.splash-credit {
+  margin-top: 8px;
+  border: 1px solid var(--line-strong);
+  background: linear-gradient(135deg, #fff6eb 0%, #fff 100%);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 0.9rem;
+  color: #4b3a2f;
+}
+
+.splash-credit a {
+  color: var(--accent);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.splash-credit a:hover {
+  text-decoration: underline;
+}
+
 .app-shell {
   max-width: 1700px;
   margin: 0 auto;
