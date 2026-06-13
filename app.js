@@ -617,11 +617,11 @@ function updateSummary(state, maskStats) {
   const percent = (maskStats.ratio * 100).toFixed(1);
   const directSunStats = estimateBlockedDirectSunHours(state);
   refs.resumo.innerHTML = [
-    `<strong>Protecoes ativas:</strong> ${active.length ? active.join(", ") : "Nenhuma"}`,
-    `<strong>Cobertura estimada da mascara:</strong> ${percent}% da abobada visivel a frente da fachada`,
-    `<strong>Horas de insolacao direta bloqueada:</strong> ${directSunStats.percent}% (${directSunStats.blockedHours} h de ${directSunStats.directHours} h/ano estimadas)`,
-    `<strong>Dimensoes da janela:</strong> ${state.janela.largura.toFixed(2)} m x ${state.janela.altura.toFixed(2)} m`,
-    `<em>Observacao: os percentuais da carta solar levam em conta o ponto central da janela.</em>`
+    `<strong>Proteções ativas:</strong> ${active.length ? active.join(", ") : "Nenhuma"}`,
+    `<strong>Cobertura estimada da máscara:</strong> ${percent}% da abóbada visível à frente da fachada`,
+    `<strong>Horas de insolação direta bloqueada:</strong> ${directSunStats.percent}% (${directSunStats.blockedHours} h de ${directSunStats.directHours} h/ano estimadas)`,
+    `<strong>Dimensões da janela:</strong> ${state.janela.largura.toFixed(2)} m x ${state.janela.altura.toFixed(2)} m`,
+    `<em>Observação: os percentuais da carta solar levam em conta o ponto central da janela.</em>`
   ].join("<br>");
 }
 
@@ -704,7 +704,7 @@ function getShadowSun(state) {
     position,
     sun,
     direct,
-    reason: direct ? "" : "Sol sem incidencia direta na fachada."
+    reason: direct ? "" : "Sol sem incidência direta na fachada."
   };
 }
 
@@ -833,7 +833,7 @@ function renderWindowShadow(state = getState()) {
   }
 
   const ratio = drawWindowShadowMask(rect, state, solar.sun);
-  refs.windowShadowStatus.textContent = `Area sombreada pelos brises: ${(ratio * 100).toFixed(1)}%`;
+  refs.windowShadowStatus.textContent = `Área sombreada pelos brises: ${(ratio * 100).toFixed(1)}%`;
 }
 
 function openWindowShadowModal() {
@@ -959,7 +959,7 @@ function drawExportLegend(context, parentRect) {
 function drawSummaryTextLine(context, line, x, y, style) {
   const colonIndex = line.indexOf(":");
 
-  if (colonIndex > 0 && !line.startsWith("Observacao")) {
+  if (colonIndex > 0 && !line.startsWith("Observação")) {
     const label = line.slice(0, colonIndex + 1);
     const value = line.slice(colonIndex + 1);
     context.font = `700 ${style.fontSize} ${style.fontFamily}`;
@@ -970,7 +970,7 @@ function drawSummaryTextLine(context, line, x, y, style) {
     return;
   }
 
-  context.font = line.startsWith("Observacao")
+  context.font = line.startsWith("Observação")
     ? `italic ${style.fontSize} ${style.fontFamily}`
     : `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
   context.fillText(line, x, y);
