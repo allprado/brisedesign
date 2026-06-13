@@ -245,6 +245,10 @@ h1, h2, h3, h4 {
   padding: 14px;
 }
 
+.controls .card {
+  box-shadow: none;
+}
+
 .card h2 {
   margin-bottom: 10px;
   font-size: 1.08rem;
