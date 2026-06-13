@@ -56,6 +56,8 @@ const ctx = refs.canvas.getContext("2d");
 const shadowCtx = refs.windowShadowCanvas.getContext("2d");
 const DEG = Math.PI / 180;
 let renderFrame = 0;
+let didRestoreConfig = false;
+const STORAGE_KEY = "briselab:lastConfig";
 const SOLAR_MONTH_PATHS = [
   { labels: [{ text: "jun", hour: 8 }], declination: 23.44 },
   { labels: [{ text: "mai", hour: 8 }, { text: "jul", hour: 16 }], declination: 20 },
@@ -121,6 +123,74 @@ function getState() {
       sobreposicao: Math.max(0, Number(refs.mqSobreposicao.value) || 0)
     }
   };
+}
+
+function getPersistableConfig() {
+  const fields = {};
+  document.querySelectorAll("input, select").forEach((field) => {
+    if (!field.id) return;
+    fields[field.id] = field.type === "checkbox" ? field.checked : field.value;
+  });
+
+  const activeTab = document.querySelector(".tab.active");
+  return {
+    fields,
+    activeTab: activeTab ? activeTab.dataset.tab : "tab-horizontal"
+  };
+}
+
+function saveAppConfig() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(getPersistableConfig()));
+  } catch (error) {
+    // localStorage can be unavailable in restricted browsing contexts.
+  }
+}
+
+function restoreActiveTab(tabId) {
+  if (!tabId) return;
+
+  const tab = document.querySelector(`.tab[data-tab="${tabId}"]`);
+  const panel = document.getElementById(tabId);
+  if (!tab || !panel) return;
+
+  document.querySelectorAll(".tab").forEach((item) => {
+    const isActive = item === tab;
+    item.classList.toggle("active", isActive);
+    item.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+
+  document.querySelectorAll(".tab-panel").forEach((item) => {
+    item.classList.toggle("active", item === panel);
+  });
+}
+
+function restoreAppConfig() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+
+    const config = JSON.parse(raw);
+    didRestoreConfig = true;
+    Object.entries(config.fields || {}).forEach(([id, value]) => {
+      const field = document.getElementById(id);
+      if (!field) return;
+
+      if (field.type === "checkbox") {
+        field.checked = Boolean(value);
+      } else {
+        field.value = value;
+      }
+    });
+
+    restoreActiveTab(config.activeTab);
+  } catch (error) {
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch (storageError) {
+      // Ignore cleanup failures in restricted browsing contexts.
+    }
+  }
 }
 
 function stereographicProject(altDeg, azDeg, center, radius) {
@@ -1011,6 +1081,7 @@ function initTabs() {
       tab.setAttribute("aria-selected", "true");
       const panel = document.getElementById(tab.dataset.tab);
       if (panel) panel.classList.add("active");
+      saveAppConfig();
     });
   });
 }
@@ -1018,8 +1089,14 @@ function initTabs() {
 function bindInputs() {
   const inputs = document.querySelectorAll("input");
   inputs.forEach((input) => {
-    input.addEventListener("input", render);
-    input.addEventListener("change", render);
+    input.addEventListener("input", () => {
+      render();
+      saveAppConfig();
+    });
+    input.addEventListener("change", () => {
+      render();
+      saveAppConfig();
+    });
   });
 
   refs.capitalSelector.addEventListener("change", (e) => {
@@ -1027,6 +1104,7 @@ function bindInputs() {
     if (val === "custom") {
       refs.cidade.disabled = false;
       refs.latitude.disabled = false;
+      saveAppConfig();
       return;
     }
 
@@ -1036,16 +1114,19 @@ function bindInputs() {
     refs.cidade.disabled = true;
     refs.latitude.disabled = true;
     render();
+    saveAppConfig();
   });
 
   refs.cidade.addEventListener("input", () => {
     if (refs.cidade.disabled) return;
     refs.capitalSelector.value = "custom";
+    saveAppConfig();
   });
 
   refs.latitude.addEventListener("input", () => {
     if (refs.latitude.disabled) return;
     refs.capitalSelector.value = "custom";
+    saveAppConfig();
   });
 
   window.addEventListener("resize", scheduleRender);
@@ -1065,12 +1146,10 @@ function bindInputs() {
 
 function initApp() {
   const selected = refs.capitalSelector.value;
-  if (selected !== "custom") {
-    refs.cidade.disabled = true;
-    refs.latitude.disabled = true;
-  }
+  refs.cidade.disabled = selected !== "custom";
+  refs.latitude.disabled = selected !== "custom";
 
-  refs.shadowDate.value = getDayOfYear(new Date());
+  if (!didRestoreConfig) refs.shadowDate.value = getDayOfYear(new Date());
 }
 
 function initLayoutObservers() {
@@ -1094,6 +1173,7 @@ function initSplashScreen() {
 }
 
 initTabs();
+restoreAppConfig();
 bindInputs();
 initApp();
 render();
