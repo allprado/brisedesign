@@ -214,7 +214,27 @@ h1, h2, h3, h4 {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding-right: 6px;
+  padding-right: 4px;
+  background: transparent;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(155, 134, 105, 0.58) transparent;
+}
+
+.controls::-webkit-scrollbar {
+  width: 6px;
+}
+
+.controls::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.controls::-webkit-scrollbar-thumb {
+  background: rgba(155, 134, 105, 0.58);
+  border-radius: 999px;
+}
+
+.controls::-webkit-scrollbar-thumb:hover {
+  background: rgba(155, 134, 105, 0.78);
 }
 
 .card {
