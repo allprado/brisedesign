@@ -71,6 +71,21 @@ body {
   min-height: 0;
 }
 
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.brand-logo {
+  width: 58px;
+  height: 58px;
+  flex: 0 0 auto;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
 h1, h2, h3, h4 {
   margin: 0;
   font-family: "Sora", "Segoe UI", sans-serif;
@@ -86,12 +101,24 @@ h1, h2, h3, h4 {
   color: var(--muted);
 }
 
-.chip {
+.credit {
   border: 1px solid var(--line-strong);
   background: linear-gradient(135deg, #fff6eb 0%, #fff 100%);
   border-radius: 999px;
   padding: 8px 14px;
   font-size: 0.9rem;
+  color: #4b3a2f;
+  white-space: nowrap;
+}
+
+.credit a {
+  color: var(--accent);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.credit a:hover {
+  text-decoration: underline;
 }
 
 .layout {
@@ -481,6 +508,10 @@ input[type="range"] {
   .topbar {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .credit {
+    white-space: normal;
   }
 
   .modal {
