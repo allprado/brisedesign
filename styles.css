@@ -298,6 +298,18 @@ input:disabled {
   cursor: not-allowed;
 }
 
+.display-value {
+  display: inline-block;
+  width: 100%;
+  padding: 8px 10px;
+  background: #f5f0e8;
+  color: #7a7268;
+  border: 1px solid #cbb9a1;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  font-family: inherit;
+}
+
 select {
   cursor: pointer;
   font-weight: 500;

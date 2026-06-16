@@ -113,8 +113,8 @@
             <h3>Lâminas horizontais (louvres)</h3>
             <label class="checkbox-row"><input id="bh-ativo" type="checkbox" checked /> Ativar brise horizontal</label>
             <div class="grid two compact">
-              <label>Número de lâminas<input id="bh-numero" type="number" min="1" step="1" value="10" /></label>
-              <label>Espaçamento vertical (m)<input id="bh-espacamento" type="number" min="0" step="0.01" value="0.30" /></label>
+              <label>Número de lâminas<input id="bh-numero" type="number" min="2" step="1" value="10" /></label>
+              <label>Espaçamento vertical (m)<span id="bh-espacamento-display" class="display-value">0.17</span></label>
               <label>Ângulo da lâmina (°)<input id="bh-angulo" type="number" step="0.1" value="0" /></label>
               <label>Distância da janela (m)<input id="bh-distancia" type="number" min="0" step="0.01" value="0.50" /></label>
               <label>Profundidade da lâmina (m)<input id="bh-profundidade" type="number" min="0" step="0.01" value="0.50" /></label>
@@ -357,6 +357,9 @@
             Horário solar
             <input id="shadow-time" type="range" min="5" max="19" step="0.25" value="12" />
             <span class="control-readout" id="shadow-time-text">12:00</span>
+          </label>
+          <label class="checkbox-row">
+            <input id="show-brises-overlay" type="checkbox" checked /> Mostrar brises
           </label>
         </div>
       </div>

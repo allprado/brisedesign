@@ -9,7 +9,7 @@ const refs = {
 
   bhAtivo: document.getElementById("bh-ativo"),
   bhNumero: document.getElementById("bh-numero"),
-  bhEspacamento: document.getElementById("bh-espacamento"),
+  bhEspacamentoDisplay: document.getElementById("bh-espacamento-display"),
   bhAngulo: document.getElementById("bh-angulo"),
   bhDistancia: document.getElementById("bh-distancia"),
   bhProfundidade: document.getElementById("bh-profundidade"),
@@ -49,7 +49,8 @@ const refs = {
   shadowTime: document.getElementById("shadow-time"),
   shadowDateText: document.getElementById("shadow-date-text"),
   shadowTimeText: document.getElementById("shadow-time-text"),
-  windowShadowStatus: document.getElementById("window-shadow-status")
+  windowShadowStatus: document.getElementById("window-shadow-status"),
+  showBrisesOverlay: document.getElementById("show-brises-overlay")
 };
 
 const ctx = refs.canvas.getContext("2d");
@@ -72,6 +73,12 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+function calculateHorizontalBriseSpacing(windowHeight, numberOfLouvres) {
+  const num = Math.max(2, Math.floor(numberOfLouvres || 1));
+  if (num < 2) return 0;
+  return windowHeight / (num - 1);
+}
+
 function wrap180(angleDeg) {
   let a = angleDeg;
   while (a > 180) a -= 360;
@@ -92,8 +99,11 @@ function getState() {
     },
     briseHorizontal: {
       ativo: refs.bhAtivo.checked,
-      numero: Math.max(1, Math.floor(Number(refs.bhNumero.value) || 1)),
-      espacamento: Math.max(0, Number(refs.bhEspacamento.value) || 0),
+      numero: Math.max(2, Math.floor(Number(refs.bhNumero.value) || 2)),
+      espacamento: calculateHorizontalBriseSpacing(
+        Math.max(0.1, Number(refs.janelaAltura.value) || 1.5),
+        Math.max(2, Math.floor(Number(refs.bhNumero.value) || 2))
+      ),
       angulo: Number(refs.bhAngulo.value) || 0,
       distancia: Math.max(0, Number(refs.bhDistancia.value) || 0),
       profundidade: Math.max(0, Number(refs.bhProfundidade.value) || 0),
@@ -817,6 +827,123 @@ function drawWindowShadowMask(rect, state, sun) {
   return total > 0 ? blocked / total : 0;
 }
 
+function drawBrisesOnWindowPreview(rect, state) {
+  const { largura, altura } = state.janela;
+  const scaleX = rect.w / largura;
+  const scaleY = rect.h / altura;
+
+  const toCanvasX = (y) => rect.x + (y / largura) * rect.w;
+  const toCanvasY = (z) => rect.y + rect.h - (z / altura) * rect.h;
+
+  // --- Marquise ---
+  const mq = state.marquise;
+  if (mq.ativo && mq.projecao > 0) {
+    const zMq = altura + mq.offsetTopo;
+    const cxL = toCanvasX(-mq.sobreposicao);
+    const cxR = toCanvasX(largura + mq.sobreposicao);
+    const cyMq = toCanvasY(zMq);
+    const mqThick = Math.max(5, 6);
+    const grad = shadowCtx.createLinearGradient(cxL, cyMq - mqThick, cxL, cyMq);
+    grad.addColorStop(0, "rgba(195, 165, 110, 0.92)");
+    grad.addColorStop(1, "rgba(120, 88, 48, 0.92)");
+    shadowCtx.fillStyle = grad;
+    shadowCtx.fillRect(cxL, cyMq - mqThick, cxR - cxL, mqThick);
+    shadowCtx.strokeStyle = "rgba(65, 45, 20, 0.75)";
+    shadowCtx.lineWidth = 1.5;
+    shadowCtx.strokeRect(cxL, cyMq - mqThick, cxR - cxL, mqThick);
+  }
+
+  // --- Aletas verticais (sidefins) ---
+  const drawSideFin = (fin, isLeft) => {
+    if (!fin.ativo || fin.projecao <= 0) return;
+    const yEdge = isLeft ? -fin.offset : largura + fin.offset;
+    const zTop = altura + fin.top;
+    const zBot = -fin.bottom;
+    const cx = toCanvasX(yEdge);
+    const cy1 = toCanvasY(zTop);
+    const cy2 = toCanvasY(zBot);
+    const finW = Math.max(5, fin.projecao * scaleX * 0.18 + 5);
+    const drawX = isLeft ? cx - finW : cx;
+    const grad = shadowCtx.createLinearGradient(drawX, 0, drawX + finW, 0);
+    if (isLeft) {
+      grad.addColorStop(0, "rgba(120, 90, 52, 0.88)");
+      grad.addColorStop(1, "rgba(190, 158, 105, 0.88)");
+    } else {
+      grad.addColorStop(0, "rgba(190, 158, 105, 0.88)");
+      grad.addColorStop(1, "rgba(120, 90, 52, 0.88)");
+    }
+    shadowCtx.fillStyle = grad;
+    shadowCtx.fillRect(drawX, cy1, finW, cy2 - cy1);
+    shadowCtx.strokeStyle = "rgba(65, 45, 20, 0.75)";
+    shadowCtx.lineWidth = 1;
+    shadowCtx.strokeRect(drawX, cy1, finW, cy2 - cy1);
+  };
+  drawSideFin(state.briseVertical.esquerdo, true);
+  drawSideFin(state.briseVertical.direito, false);
+
+  // --- Brises horizontais (louvres) ---
+  const b = state.briseHorizontal;
+  if (b.ativo && b.numero >= 1 && b.profundidade > 0) {
+    const ang = b.angulo * DEG;
+    const projZ = b.profundidade * Math.sin(ang);
+    const cxL = toCanvasX(-b.sobreposicao);
+    const cxR = toCanvasX(largura + b.sobreposicao);
+    const stripW = cxR - cxL;
+
+    for (let i = 0; i < b.numero; i++) {
+      const zBack = altura + b.offsetTopo - i * b.espacamento;
+      const zFront = zBack - projZ;
+
+      const cyBack = toCanvasY(zBack);
+      const cyFront = toCanvasY(zFront);
+
+      const cyTop = Math.min(cyBack, cyFront);
+      const cyBot = Math.max(cyBack, cyFront);
+      const stripH = Math.max(2, cyBot - cyTop);
+
+      // Fill: gradient simulating lit face
+      let fillStyle;
+      if (Math.abs(ang) < 0.005) {
+        fillStyle = "rgba(175, 145, 92, 0.93)";
+        shadowCtx.fillStyle = fillStyle;
+      } else {
+        const grad = shadowCtx.createLinearGradient(cxL, cyTop, cxL, cyTop + stripH);
+        if (ang > 0) {
+          // Face superior visível (frente inclinada para baixo)
+          grad.addColorStop(0, "rgba(215, 188, 138, 0.95)");
+          grad.addColorStop(0.6, "rgba(175, 145, 92, 0.95)");
+          grad.addColorStop(1, "rgba(110, 82, 42, 0.95)");
+        } else {
+          // Face inferior visível (frente inclinada para cima)
+          grad.addColorStop(0, "rgba(105, 78, 38, 0.95)");
+          grad.addColorStop(0.4, "rgba(155, 125, 78, 0.95)");
+          grad.addColorStop(1, "rgba(205, 178, 130, 0.95)");
+        }
+        shadowCtx.fillStyle = grad;
+      }
+      shadowCtx.fillRect(cxL, cyTop, stripW, stripH);
+
+      // Aresta frontal (borda da lâmina visível ao observador)
+      const frontEdgeCy = ang >= 0 ? cyBot : cyTop;
+      shadowCtx.strokeStyle = "rgba(58, 38, 14, 0.88)";
+      shadowCtx.lineWidth = 1.5;
+      shadowCtx.beginPath();
+      shadowCtx.moveTo(cxL, frontEdgeCy);
+      shadowCtx.lineTo(cxR, frontEdgeCy);
+      shadowCtx.stroke();
+
+      // Aresta traseira (mais sutil)
+      const backEdgeCy = ang >= 0 ? cyTop : cyBot;
+      shadowCtx.strokeStyle = "rgba(58, 38, 14, 0.32)";
+      shadowCtx.lineWidth = 0.8;
+      shadowCtx.beginPath();
+      shadowCtx.moveTo(cxL, backEdgeCy);
+      shadowCtx.lineTo(cxR, backEdgeCy);
+      shadowCtx.stroke();
+    }
+  }
+}
+
 function renderWindowShadow(state = getState()) {
   if (!refs.windowShadowModal.classList.contains("open")) return;
 
@@ -827,13 +954,16 @@ function renderWindowShadow(state = getState()) {
   shadowCtx.clearRect(0, 0, width, height);
   drawWindowPreviewBase(rect, state, solar.direct);
 
-  if (!solar.direct) {
+  if (solar.direct) {
+    const ratio = drawWindowShadowMask(rect, state, solar.sun);
+    refs.windowShadowStatus.textContent = `Área sombreada pelos brises: ${(ratio * 100).toFixed(1)}%`;
+  } else {
     refs.windowShadowStatus.textContent = solar.reason;
-    return;
   }
 
-  const ratio = drawWindowShadowMask(rect, state, solar.sun);
-  refs.windowShadowStatus.textContent = `Área sombreada pelos brises: ${(ratio * 100).toFixed(1)}%`;
+  if (refs.showBrisesOverlay.checked) {
+    drawBrisesOnWindowPreview(rect, state);
+  }
 }
 
 function openWindowShadowModal() {
@@ -1039,6 +1169,7 @@ function resizeCanvasForDpr() {
 
 function render() {
   resizeCanvasForDpr();
+  updateBriseSpacingDisplay();
   const state = getState();
 
   const width = refs.canvas.width / (window.devicePixelRatio || 1);
@@ -1063,6 +1194,13 @@ function scheduleRender() {
     renderFrame = 0;
     render();
   });
+}
+
+function updateBriseSpacingDisplay() {
+  const height = Math.max(0.1, Number(refs.janelaAltura.value) || 1.5);
+  const numero = Math.max(2, Math.floor(Number(refs.bhNumero.value) || 2));
+  const espacamento = calculateHorizontalBriseSpacing(height, numero);
+  refs.bhEspacamentoDisplay.textContent = espacamento.toFixed(2);
 }
 
 function initTabs() {
