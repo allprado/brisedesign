@@ -13,33 +13,38 @@ const refs = {
   bhAngulo: document.getElementById("bh-angulo"),
   bhDistancia: document.getElementById("bh-distancia"),
   bhProfundidade: document.getElementById("bh-profundidade"),
+  bhEspessura: document.getElementById("bh-espessura"),
   bhOffsetTopo: document.getElementById("bh-offset-topo"),
   bhSobreposicao: document.getElementById("bh-sobreposicao"),
 
   bveAtivo: document.getElementById("bv-esq-ativo"),
   bveProjecao: document.getElementById("bv-esq-projecao"),
+  bveEspessura: document.getElementById("bv-esq-espessura"),
   bveOffset: document.getElementById("bv-esq-offset"),
   bveTop: document.getElementById("bv-esq-top"),
-  bveBottom: document.getElementById("bv-esq-bottom"),
 
   bvdAtivo: document.getElementById("bv-dir-ativo"),
   bvdProjecao: document.getElementById("bv-dir-projecao"),
+  bvdEspessura: document.getElementById("bv-dir-espessura"),
   bvdOffset: document.getElementById("bv-dir-offset"),
   bvdTop: document.getElementById("bv-dir-top"),
-  bvdBottom: document.getElementById("bv-dir-bottom"),
 
   mqAtivo: document.getElementById("mq-ativo"),
   mqOffsetTopo: document.getElementById("mq-offset-topo"),
   mqProjecao: document.getElementById("mq-projecao"),
+  mqEspessura: document.getElementById("mq-espessura"),
   mqSobreposicao: document.getElementById("mq-sobreposicao"),
 
   cidadeDisplay: document.getElementById("cidade-display"),
   latDisplay: document.getElementById("lat-display"),
   resumo: document.getElementById("resumo"),
   canvas: document.getElementById("solar-canvas"),
+  maskUpdateOverlay: document.getElementById("mask-update-overlay"),
+  updateMaskButton: document.getElementById("update-mask-button"),
   chartCard: document.querySelector(".chart-card"),
   downloadSolarChart: document.getElementById("download-solar-chart"),
   splashScreen: document.getElementById("splash-screen"),
+  uiBlocker: document.getElementById("ui-blocker"),
 
   openWindowShadow: document.getElementById("open-window-shadow"),
   windowShadowModal: document.getElementById("window-shadow-modal"),
@@ -50,15 +55,50 @@ const refs = {
   shadowDateText: document.getElementById("shadow-date-text"),
   shadowTimeText: document.getElementById("shadow-time-text"),
   windowShadowStatus: document.getElementById("window-shadow-status"),
-  showBrisesOverlay: document.getElementById("show-brises-overlay")
+  showBrisesOverlay: document.getElementById("show-brises-overlay"),
+
+  windowModel3dSlot: document.getElementById("window-model-3d-slot"),
+  windowModel3dCanvas: document.getElementById("window-model-3d-canvas"),
+  windowModel3dStatus: document.getElementById("window-model-3d-status"),
+  resetModel3dView: document.getElementById("reset-model-3d-view"),
+  expandModel3d: document.getElementById("expand-model-3d"),
+  model3dModal: document.getElementById("model-3d-modal"),
+  model3dModalSlot: document.getElementById("model-3d-modal-slot"),
+  resetModel3dViewModal: document.getElementById("reset-model-3d-view-modal"),
+  closeModel3dModal: document.getElementById("close-model-3d-modal")
 };
 
 const ctx = refs.canvas.getContext("2d");
 const shadowCtx = refs.windowShadowCanvas.getContext("2d");
 const DEG = Math.PI / 180;
+const MIN_HEATMAP_FRONT_COMPONENT = Math.cos(89.5 * DEG);
 let renderFrame = 0;
 let didRestoreConfig = false;
 const STORAGE_KEY = "briselab:lastConfig";
+const THREE_CDN_URL = "https://unpkg.com/three@0.165.0/build/three.module.js";
+const MODEL_COLORS = {
+  horizontal: 0xba4d2d,
+  vertical: 0x35765e,
+  marquise: 0x2f6f8f
+};
+let threeModule = null;
+let threeLoadPromise = null;
+let model3dRenderer = null;
+let model3dScene = null;
+let model3dCamera = null;
+let model3dGroup = null;
+let model3dBaseDistance = 4;
+let model3dZoom = 1;
+let model3dPointer = null;
+let model3dVelocityY = 0;
+let model3dInertiaFrame = 0;
+let maskNeedsUpdate = false;
+let isUpdatingMask = false;
+let lastMaskStats = { shadedPositions: 0, frontCount: 0, ratio: 0 };
+let lastMaskSamples = [];
+let shadeRasterCanvas = null;
+let shadeRasterCtx = null;
+let shadeRasterKey = "";
 const SOLAR_MONTH_PATHS = [
   { labels: [{ text: "jun", hour: 8 }], declination: 23.44 },
   { labels: [{ text: "mai", hour: 8 }, { text: "jul", hour: 16 }], declination: 20 },
@@ -107,6 +147,7 @@ function getState() {
       angulo: Number(refs.bhAngulo.value) || 0,
       distancia: Math.max(0, Number(refs.bhDistancia.value) || 0),
       profundidade: Math.max(0, Number(refs.bhProfundidade.value) || 0),
+      espessura: Math.max(0, Number(refs.bhEspessura.value) || 0),
       offsetTopo: Math.max(0, Number(refs.bhOffsetTopo.value) || 0),
       sobreposicao: Math.max(0, Number(refs.bhSobreposicao.value) || 0)
     },
@@ -114,22 +155,23 @@ function getState() {
       esquerdo: {
         ativo: refs.bveAtivo.checked,
         projecao: Math.max(0, Number(refs.bveProjecao.value) || 0),
+        espessura: Math.max(0, Number(refs.bveEspessura.value) || 0),
         offset: Math.max(0, Number(refs.bveOffset.value) || 0),
-        top: Math.max(0, Number(refs.bveTop.value) || 0),
-        bottom: Math.max(0, Number(refs.bveBottom.value) || 0)
+        top: Math.max(0, Number(refs.bveTop.value) || 0)
       },
       direito: {
         ativo: refs.bvdAtivo.checked,
         projecao: Math.max(0, Number(refs.bvdProjecao.value) || 0),
+        espessura: Math.max(0, Number(refs.bvdEspessura.value) || 0),
         offset: Math.max(0, Number(refs.bvdOffset.value) || 0),
-        top: Math.max(0, Number(refs.bvdTop.value) || 0),
-        bottom: Math.max(0, Number(refs.bvdBottom.value) || 0)
+        top: Math.max(0, Number(refs.bvdTop.value) || 0)
       }
     },
     marquise: {
       ativo: refs.mqAtivo.checked,
       offsetTopo: Math.max(0, Number(refs.mqOffsetTopo.value) || 0),
       projecao: Math.max(0, Number(refs.mqProjecao.value) || 0),
+      espessura: Math.max(0, Number(refs.mqEspessura.value) || 0),
       sobreposicao: Math.max(0, Number(refs.mqSobreposicao.value) || 0)
     }
   };
@@ -259,51 +301,112 @@ function sunVectorFacade(altitudeDeg, azimuthDeg, facadeAzimuthDeg) {
   };
 }
 
+function rayIntersectsBox(origin, direction, bounds, options = {}) {
+  let tMin = 1e-9;
+  let tMax = Infinity;
+
+  if (options.ignoreOriginInside) {
+    const startsInside = origin.x >= bounds.x[0] && origin.x <= bounds.x[1] &&
+      origin.y >= bounds.y[0] && origin.y <= bounds.y[1] &&
+      origin.z >= bounds.z[0] && origin.z <= bounds.z[1];
+    if (startsInside) return false;
+  }
+
+  const axes = ["x", "y", "z"];
+  for (const axis of axes) {
+    const d = direction[axis];
+    const min = bounds[axis][0];
+    const max = bounds[axis][1];
+
+    if (Math.abs(d) < 1e-9) {
+      if (origin[axis] < min || origin[axis] > max) return false;
+      continue;
+    }
+
+    let t1 = (min - origin[axis]) / d;
+    let t2 = (max - origin[axis]) / d;
+    if (t1 > t2) [t1, t2] = [t2, t1];
+
+    tMin = Math.max(tMin, t1);
+    tMax = Math.min(tMax, t2);
+    if (tMax < tMin) return false;
+  }
+
+  return tMax >= tMin && tMax > 0;
+}
+
+function getHorizontalLouvreVerticalPlacement(state, index) {
+  const { altura } = state.janela;
+  const b = state.briseHorizontal;
+  const angle = b.angulo * DEG;
+  const depth = Math.max(0, b.profundidade);
+  const thickness = Math.max(0.001, b.espessura || 0.001);
+  const halfThickness = thickness / 2;
+  const offsets = [
+    -halfThickness * Math.cos(angle),
+    halfThickness * Math.cos(angle),
+    -depth * Math.sin(angle) - halfThickness * Math.cos(angle),
+    -depth * Math.sin(angle) + halfThickness * Math.cos(angle)
+  ];
+  const minOffset = Math.min(...offsets);
+  const maxOffset = Math.max(...offsets);
+  const topBackZ = altura - maxOffset;
+  const bottomBackZ = -minOffset;
+
+  if (topBackZ < bottomBackZ || b.numero <= 1) {
+    return (altura - minOffset - maxOffset) / 2;
+  }
+
+  const clampedIndex = clamp(index, 0, b.numero - 1);
+  const ratio = b.numero <= 1 ? 0.5 : clampedIndex / (b.numero - 1);
+  return topBackZ - (topBackZ - bottomBackZ) * ratio;
+}
+
 function intersectsMarquise(point, sun, state) {
   const mq = state.marquise;
   if (!mq.ativo || mq.projecao <= 0) return false;
 
-  const zPlane = state.janela.altura + mq.offsetTopo;
-  if (sun.sz <= 0) return false;
-
-  const t = (zPlane - point.z) / sun.sz;
-  if (t <= 0) return false;
-
-  const xi = t * sun.sx;
-  if (xi < 0 || xi > mq.projecao) return false;
-
-  const yMin = -mq.sobreposicao;
-  const yMax = state.janela.largura + mq.sobreposicao;
-  const yi = point.y + t * sun.sy;
-  return yi >= yMin && yi <= yMax;
+  const zTop = state.janela.altura + mq.offsetTopo;
+  const thickness = Math.max(0.001, mq.espessura || 0);
+  return rayIntersectsBox(
+    { x: 0, y: point.y, z: point.z },
+    { x: sun.sx, y: sun.sy, z: sun.sz },
+    {
+      x: [0, mq.projecao],
+      y: [-mq.sobreposicao, state.janela.largura + mq.sobreposicao],
+      z: [zTop - thickness, zTop]
+    }
+  );
 }
 
 function intersectsSidefins(point, sun, state) {
   const { altura, largura } = state.janela;
   const { esquerdo, direito } = state.briseVertical;
 
-  if (esquerdo.ativo && esquerdo.projecao > 0 && sun.sy < 0) {
-    const yPlane = -esquerdo.offset;
-    const t = (yPlane - point.y) / sun.sy;
-    if (t > 0) {
-      const xi = t * sun.sx;
-      const zi = point.z + t * sun.sz;
-      if (xi >= 0 && xi <= esquerdo.projecao && zi >= -esquerdo.bottom && zi <= altura + esquerdo.top) {
-        return true;
+  if (esquerdo.ativo && esquerdo.projecao > 0) {
+    const thickness = Math.max(0.001, esquerdo.espessura || 0);
+    if (rayIntersectsBox(
+      { x: 0, y: point.y, z: point.z },
+      { x: sun.sx, y: sun.sy, z: sun.sz },
+      {
+        x: [0, esquerdo.projecao],
+        y: [-esquerdo.offset - thickness, -esquerdo.offset],
+        z: [0, altura + esquerdo.top]
       }
-    }
+    )) return true;
   }
 
-  if (direito.ativo && direito.projecao > 0 && sun.sy > 0) {
-    const yPlane = largura + direito.offset;
-    const t = (yPlane - point.y) / sun.sy;
-    if (t > 0) {
-      const xi = t * sun.sx;
-      const zi = point.z + t * sun.sz;
-      if (xi >= 0 && xi <= direito.projecao && zi >= -direito.bottom && zi <= altura + direito.top) {
-        return true;
+  if (direito.ativo && direito.projecao > 0) {
+    const thickness = Math.max(0.001, direito.espessura || 0);
+    if (rayIntersectsBox(
+      { x: 0, y: point.y, z: point.z },
+      { x: sun.sx, y: sun.sy, z: sun.sz },
+      {
+        x: [0, direito.projecao],
+        y: [largura + direito.offset, largura + direito.offset + thickness],
+        z: [0, altura + direito.top]
       }
-    }
+    )) return true;
   }
 
   return false;
@@ -316,6 +419,7 @@ function intersectsLouvres(point, sun, state) {
   const yMin = -b.sobreposicao;
   const yMax = state.janela.largura + b.sobreposicao;
   const ang = b.angulo * DEG;
+  const thickness = Math.max(0.001, b.espessura || 0);
 
   const ux = Math.cos(ang);
   const uz = -Math.sin(ang);
@@ -323,23 +427,26 @@ function intersectsLouvres(point, sun, state) {
   const nz = -ux;
 
   for (let i = 0; i < b.numero; i += 1) {
-    const z0 = state.janela.altura + b.offsetTopo - i * b.espacamento;
+    const z0 = getHorizontalLouvreVerticalPlacement(state, i);
     const x0 = b.distancia;
+    const pRelX = -x0;
+    const pRelZ = point.z - z0;
+    const localOrigin = {
+      x: pRelX * ux + pRelZ * uz,
+      y: point.y,
+      z: pRelX * nx + pRelZ * nz
+    };
+    const localDirection = {
+      x: sun.sx * ux + sun.sz * uz,
+      y: sun.sy,
+      z: sun.sx * nx + sun.sz * nz
+    };
 
-    const numerator = nx * (x0 - 0) + nz * (z0 - point.z);
-    const denominator = nx * sun.sx + nz * sun.sz;
-    if (Math.abs(denominator) < 1e-9) continue;
-
-    const t = numerator / denominator;
-    if (t <= 0) continue;
-
-    const qx = t * sun.sx;
-    const qy = point.y + t * sun.sy;
-    const qz = point.z + t * sun.sz;
-    if (qy < yMin || qy > yMax) continue;
-
-    const lambda = (qx - x0) * ux + (qz - z0) * uz;
-    if (lambda >= 0 && lambda <= b.profundidade) {
+    if (rayIntersectsBox(localOrigin, localDirection, {
+      x: [0, b.profundidade],
+      y: [yMin, yMax],
+      z: [-thickness / 2, thickness / 2]
+    }, { ignoreOriginInside: true })) {
       return true;
     }
   }
@@ -347,23 +454,191 @@ function intersectsLouvres(point, sun, state) {
   return false;
 }
 
-function isBlockedByBrises(altitudeDeg, azimuthDeg, state) {
-  if (altitudeDeg <= 0) return false;
+function getConvexHull(points) {
+  if (points.length <= 3) return points;
+  const sorted = [...points].sort((a, b) => a.y === b.y ? a.z - b.z : a.y - b.y);
+  const cross = (o, a, b) => (a.y - o.y) * (b.z - o.z) - (a.z - o.z) * (b.y - o.y);
+  const lower = [];
+  for (const point of sorted) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], point) <= 0) {
+      lower.pop();
+    }
+    lower.push(point);
+  }
+  const upper = [];
+  for (let i = sorted.length - 1; i >= 0; i -= 1) {
+    const point = sorted[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], point) <= 0) {
+      upper.pop();
+    }
+    upper.push(point);
+  }
+  lower.pop();
+  upper.pop();
+  return lower.concat(upper);
+}
+
+function projectBoxShadowToWindow(vertices, sun) {
+  if (!sun || sun.sx <= MIN_HEATMAP_FRONT_COMPONENT) return null;
+
+  const projected = vertices.map((vertex) => {
+    const frontX = Math.max(0, vertex.x);
+    const t = frontX / sun.sx;
+    return {
+      y: vertex.y - t * sun.sy,
+      z: vertex.z - t * sun.sz
+    };
+  });
+  return getConvexHull(projected);
+}
+
+function createAxisAlignedBoxVertices(bounds) {
+  const vertices = [];
+  for (const x of bounds.x) {
+    for (const y of bounds.y) {
+      for (const z of bounds.z) {
+        vertices.push({ x, y, z });
+      }
+    }
+  }
+  return vertices;
+}
+
+function createHorizontalLouvreVertices(state, index) {
+  const b = state.briseHorizontal;
+  const angle = b.angulo * DEG;
+  const depth = Math.max(0, b.profundidade);
+  const thickness = Math.max(0.001, b.espessura || 0.001);
+  const yMin = -b.sobreposicao;
+  const yMax = state.janela.largura + b.sobreposicao;
+  const z0 = getHorizontalLouvreVerticalPlacement(state, index);
+  const x0 = b.distancia;
+  const ux = Math.cos(angle);
+  const uz = -Math.sin(angle);
+  const nx = -uz;
+  const nz = -ux;
+  const vertices = [];
+
+  for (const lambda of [0, depth]) {
+    for (const y of [yMin, yMax]) {
+      for (const normalOffset of [-thickness / 2, thickness / 2]) {
+        vertices.push({
+          x: x0 + lambda * ux + normalOffset * nx,
+          y,
+          z: z0 + lambda * uz + normalOffset * nz
+        });
+      }
+    }
+  }
+
+  return vertices;
+}
+
+function getShadowPolygonsForSun(sun, state) {
+  const polygons = [];
+  const { largura, altura } = state.janela;
+  const mq = state.marquise;
+  if (mq.ativo && mq.projecao > 0) {
+    const zTop = altura + mq.offsetTopo;
+    const thickness = Math.max(0.001, mq.espessura || 0.001);
+    const polygon = projectBoxShadowToWindow(createAxisAlignedBoxVertices({
+      x: [0, mq.projecao],
+      y: [-mq.sobreposicao, largura + mq.sobreposicao],
+      z: [zTop - thickness, zTop]
+    }), sun);
+    if (polygon) polygons.push(polygon);
+  }
+
+  const addSideFin = (fin, isLeft) => {
+    if (!fin.ativo || fin.projecao <= 0) return;
+    const thickness = Math.max(0.001, fin.espessura || 0.001);
+    const yBounds = isLeft
+      ? [-fin.offset - thickness, -fin.offset]
+      : [largura + fin.offset, largura + fin.offset + thickness];
+    const polygon = projectBoxShadowToWindow(createAxisAlignedBoxVertices({
+      x: [0, fin.projecao],
+      y: yBounds,
+      z: [0, altura + fin.top]
+    }), sun);
+    if (polygon) polygons.push(polygon);
+  };
+  addSideFin(state.briseVertical.esquerdo, true);
+  addSideFin(state.briseVertical.direito, false);
+
+  const b = state.briseHorizontal;
+  if (b.ativo && b.numero > 0 && b.profundidade > 0) {
+    for (let i = 0; i < b.numero; i += 1) {
+      const polygon = projectBoxShadowToWindow(createHorizontalLouvreVertices(state, i), sun);
+      if (polygon) polygons.push(polygon);
+    }
+  }
+
+  return polygons;
+}
+
+function getShadeRaster(state) {
+  const ratio = state.janela.largura / state.janela.altura;
+  const targetPixels = 18000;
+  const width = clamp(Math.round(Math.sqrt(targetPixels * ratio)), 48, 240);
+  const height = clamp(Math.round(width / ratio), 48, 280);
+  const key = `${width}x${height}`;
+
+  if (!shadeRasterCanvas || shadeRasterKey !== key) {
+    shadeRasterCanvas = document.createElement("canvas");
+    shadeRasterCtx = shadeRasterCanvas.getContext("2d", { willReadFrequently: true });
+    shadeRasterCanvas.width = width;
+    shadeRasterCanvas.height = height;
+    shadeRasterKey = key;
+  }
+
+  return { canvas: shadeRasterCanvas, context: shadeRasterCtx, width, height };
+}
+
+function fillWindowShadowPolygon(context, polygon, state, width, height) {
+  if (!polygon || polygon.length < 3) return;
+  context.beginPath();
+  polygon.forEach((point, index) => {
+    const x = (point.y / state.janela.largura) * width;
+    const y = (1 - point.z / state.janela.altura) * height;
+    if (index === 0) context.moveTo(x, y);
+    else context.lineTo(x, y);
+  });
+  context.closePath();
+  context.fill();
+}
+
+function getWindowShadeRatioForSun(sun, state, columns = 11, rows = 11) {
+  if (!sun || sun.sx <= MIN_HEATMAP_FRONT_COMPONENT) return 0;
+
+  const polygons = getShadowPolygonsForSun(sun, state);
+  if (!polygons.length) return 0;
+
+  const raster = getShadeRaster(state);
+  const { context, width, height } = raster;
+  context.clearRect(0, 0, width, height);
+  context.fillStyle = "#000";
+  polygons.forEach((polygon) => fillWindowShadowPolygon(context, polygon, state, width, height));
+
+  const pixels = context.getImageData(0, 0, width, height).data;
+  let shaded = 0;
+  for (let i = 3; i < pixels.length; i += 4) {
+    if (pixels[i] > 0) {
+      shaded += 1;
+    }
+  }
+
+  return shaded / (width * height);
+}
+
+function getWindowShadeRatioForSolarPosition(altitudeDeg, azimuthDeg, state, columns = 11, rows = 11) {
+  if (altitudeDeg <= 0) return 0;
 
   const relative = wrap180(azimuthDeg - state.local.orientacao);
-  if (Math.abs(relative) > 90) return false;
+  if (Math.abs(relative) > 90) return 0;
 
   const sun = sunVectorFacade(altitudeDeg, azimuthDeg, state.local.orientacao);
-  if (sun.sx <= 0) return false;
-
-  const point = {
-    y: state.janela.largura / 2,
-    z: state.janela.altura / 2
-  };
-
-  return intersectsMarquise(point, sun, state) ||
-    intersectsSidefins(point, sun, state) ||
-    intersectsLouvres(point, sun, state);
+  if (sun.sx <= MIN_HEATMAP_FRONT_COMPONENT) return 0;
+  return getWindowShadeRatioForSun(sun, state, columns, rows);
 }
 
 function drawBaseChart(center, radius) {
@@ -583,41 +858,65 @@ function drawFacadePlaneLine(state, center, radius) {
   ctx.restore();
 }
 
-function drawShadeMask(state, center, radius) {
-  const stepAlt = 1;
-  const stepAz = 1;
-  let blockedCount = 0;
-  let frontCount = 0;
+function drawShadeMaskSamples(samples, state, center, radius) {
+  samples.forEach((sample) => {
+    const p = stereographicProject(sample.alt, state.local.orientacao + sample.relativeAz, center, radius);
+    const alpha = 0.08 + sample.shadeRatio * 0.5;
+    const dotRadius = 1.8 + sample.shadeRatio * 3.2;
+    ctx.fillStyle = `rgba(186, 77, 45, ${alpha.toFixed(3)})`;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, dotRadius, 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
 
-  ctx.fillStyle = "rgba(186, 77, 45, 0.32)";
+function calculateShadeMaskSamples(state) {
+  const stepAlt = 2;
+  const stepRelativeAz = 2;
+  let shadeRatioSum = 0;
+  let shadedPositions = 0;
+  let frontCount = 0;
+  const samples = [];
 
   for (let alt = 0; alt <= 90; alt += stepAlt) {
-    for (let az = 0; az < 360; az += stepAz) {
-      const relative = wrap180(az - state.local.orientacao);
-      if (Math.abs(relative) > 90) continue;
+    for (let relativeAz = -90; relativeAz <= 90; relativeAz += stepRelativeAz) {
+      if (alt <= 0) continue;
+      const sun = sunVectorFacade(alt, state.local.orientacao + relativeAz, state.local.orientacao);
+      if (sun.sx <= MIN_HEATMAP_FRONT_COMPONENT) continue;
 
       frontCount += 1;
-      if (!isBlockedByBrises(alt, az, state)) continue;
-      blockedCount += 1;
-
-      const p = stereographicProject(alt, az, center, radius);
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, 1.8, 0, Math.PI * 2);
-      ctx.fill();
+      const shadeRatio = getWindowShadeRatioForSun(sun, state, 5, 5);
+      shadeRatioSum += shadeRatio;
+      if (shadeRatio <= 0) continue;
+      shadedPositions += 1;
+      samples.push({ alt, relativeAz, shadeRatio });
     }
   }
 
   return {
-    blockedCount,
-    frontCount,
-    ratio: frontCount > 0 ? blockedCount / frontCount : 0
+    samples,
+    stats: {
+      shadedPositions,
+      frontCount,
+      ratio: frontCount > 0 ? shadeRatioSum / frontCount : 0
+    }
   };
 }
 
+function drawShadeMask(state, center, radius) {
+  const result = calculateShadeMaskSamples(state);
+  lastMaskSamples = result.samples;
+  drawShadeMaskSamples(lastMaskSamples, state, center, radius);
+  return result.stats;
+}
+
+function drawCachedShadeMask(state, center, radius) {
+  drawShadeMaskSamples(lastMaskSamples, state, center, radius);
+  return lastMaskStats;
+}
+
 function updateSummary(state, maskStats) {
-  refs.cidadeDisplay.textContent = state.local.cidade;
-  refs.latDisplay.textContent = `${state.local.latitude.toFixed(2)}°`;
-  refs.orientacaoTexto.textContent = `${Math.round(state.local.orientacao)}°`;
+  updateChartHeader(state);
 
   const active = [];
   if (state.briseHorizontal.ativo) active.push("Brise horizontal");
@@ -628,11 +927,41 @@ function updateSummary(state, maskStats) {
   const directSunStats = estimateBlockedDirectSunHours(state);
   refs.resumo.innerHTML = [
     `<strong>Proteções ativas:</strong> ${active.length ? active.join(", ") : "Nenhuma"}`,
-    `<strong>Cobertura estimada da máscara:</strong> ${percent}% da abóbada visível à frente da fachada`,
-    `<strong>Horas de insolação direta bloqueada:</strong> ${directSunStats.percent}% (${directSunStats.blockedHours} h de ${directSunStats.directHours} h/ano estimadas)`,
+    `<strong>Sombreamento médio da janela no mapa:</strong> ${percent}% da área da janela ao longo da abóbada frontal`,
+    `<strong>Horas equivalentes de área sombreada:</strong> ${directSunStats.percent}% (${directSunStats.blockedHours} h-eq de ${directSunStats.directHours} h/ano estimadas)`,
     `<strong>Dimensões da janela:</strong> ${state.janela.largura.toFixed(2)} m x ${state.janela.altura.toFixed(2)} m`,
-    `<em>Observação: os percentuais da carta solar levam em conta o ponto central da janela.</em>`
+    `<em>Observação: a carta solar usa um mapa de calor da porcentagem da área da janela sombreada.</em>`
   ].join("<br>");
+}
+
+function updateChartHeader(state) {
+  refs.cidadeDisplay.textContent = state.local.cidade;
+  refs.latDisplay.textContent = `${state.local.latitude.toFixed(2)}°`;
+  refs.orientacaoTexto.textContent = `${Math.round(state.local.orientacao)}°`;
+}
+
+function setMaskUpdateOverlay(open) {
+  refs.maskUpdateOverlay.classList.toggle("open", open);
+  refs.maskUpdateOverlay.setAttribute("aria-hidden", open ? "false" : "true");
+}
+
+function setUiBlocked(blocked) {
+  isUpdatingMask = blocked;
+  refs.uiBlocker.classList.toggle("open", blocked);
+  refs.uiBlocker.setAttribute("aria-hidden", blocked ? "false" : "true");
+}
+
+function markMaskNeedsUpdate() {
+  maskNeedsUpdate = true;
+  setMaskUpdateOverlay(true);
+}
+
+function renderLiveSurfaces() {
+  updateBriseSpacingDisplay();
+  const state = getState();
+  updateChartHeader(state);
+  renderWindowShadow(state);
+  renderWindowModel3d(state);
 }
 
 function getDayOfYear(date) {
@@ -659,9 +988,9 @@ function declinationFromDay(day) {
 }
 
 function estimateBlockedDirectSunHours(state) {
-  const hourStep = 0.25;
+  const hourStep = 0.5;
   let directHours = 0;
-  let blockedHours = 0;
+  let shadedEquivalentHours = 0;
 
   for (let day = 1; day <= 365; day += 1) {
     const declination = declinationFromDay(day);
@@ -678,16 +1007,14 @@ function estimateBlockedDirectSunHours(state) {
       if (sun.sx <= 0) continue;
 
       directHours += hourStep;
-      if (isBlockedByBrises(position.altitude, position.azimuth, state)) {
-        blockedHours += hourStep;
-      }
+      shadedEquivalentHours += hourStep * getWindowShadeRatioForSun(sun, state, 5, 5);
     }
   }
 
-  const percent = directHours > 0 ? (blockedHours / directHours) * 100 : 0;
+  const percent = directHours > 0 ? (shadedEquivalentHours / directHours) * 100 : 0;
   return {
     percent: percent.toFixed(1),
-    blockedHours: Math.round(blockedHours).toLocaleString("pt-BR"),
+    blockedHours: Math.round(shadedEquivalentHours).toLocaleString("pt-BR"),
     directHours: Math.round(directHours).toLocaleString("pt-BR")
   };
 }
@@ -842,7 +1169,7 @@ function drawBrisesOnWindowPreview(rect, state) {
     const cxL = toCanvasX(-mq.sobreposicao);
     const cxR = toCanvasX(largura + mq.sobreposicao);
     const cyMq = toCanvasY(zMq);
-    const mqThick = Math.max(5, 6);
+    const mqThick = Math.max(5, mq.espessura * scaleY);
     const grad = shadowCtx.createLinearGradient(cxL, cyMq - mqThick, cxL, cyMq);
     grad.addColorStop(0, "rgba(195, 165, 110, 0.92)");
     grad.addColorStop(1, "rgba(120, 88, 48, 0.92)");
@@ -858,11 +1185,11 @@ function drawBrisesOnWindowPreview(rect, state) {
     if (!fin.ativo || fin.projecao <= 0) return;
     const yEdge = isLeft ? -fin.offset : largura + fin.offset;
     const zTop = altura + fin.top;
-    const zBot = -fin.bottom;
+    const zBot = 0;
     const cx = toCanvasX(yEdge);
     const cy1 = toCanvasY(zTop);
     const cy2 = toCanvasY(zBot);
-    const finW = Math.max(5, fin.projecao * scaleX * 0.18 + 5);
+    const finW = Math.max(5, fin.espessura * scaleX);
     const drawX = isLeft ? cx - finW : cx;
     const grad = shadowCtx.createLinearGradient(drawX, 0, drawX + finW, 0);
     if (isLeft) {
@@ -889,9 +1216,10 @@ function drawBrisesOnWindowPreview(rect, state) {
     const cxL = toCanvasX(-b.sobreposicao);
     const cxR = toCanvasX(largura + b.sobreposicao);
     const stripW = cxR - cxL;
+    const thicknessPx = Math.max(2, b.espessura * scaleY);
 
     for (let i = 0; i < b.numero; i++) {
-      const zBack = altura + b.offsetTopo - i * b.espacamento;
+      const zBack = getHorizontalLouvreVerticalPlacement(state, i);
       const zFront = zBack - projZ;
 
       const cyBack = toCanvasY(zBack);
@@ -899,7 +1227,7 @@ function drawBrisesOnWindowPreview(rect, state) {
 
       const cyTop = Math.min(cyBack, cyFront);
       const cyBot = Math.max(cyBack, cyFront);
-      const stripH = Math.max(2, cyBot - cyTop);
+      const stripH = Math.max(2, cyBot - cyTop + thicknessPx);
 
       // Fill: gradient simulating lit face
       let fillStyle;
@@ -975,6 +1303,377 @@ function openWindowShadowModal() {
 function closeWindowShadowModal() {
   refs.windowShadowModal.classList.remove("open");
   refs.windowShadowModal.setAttribute("aria-hidden", "true");
+}
+
+function loadThreeModule() {
+  if (threeModule) return Promise.resolve(threeModule);
+  if (!threeLoadPromise) {
+    threeLoadPromise = import(THREE_CDN_URL)
+      .then((module) => {
+        threeModule = module;
+        return threeModule;
+      })
+      .catch((error) => {
+        refs.windowModel3dStatus.textContent = "Não foi possível carregar o Three.js.";
+        threeLoadPromise = null;
+        throw error;
+      });
+  }
+  return threeLoadPromise;
+}
+
+function disposeModel3dObject(object) {
+  object.traverse((child) => {
+    if (child.geometry) child.geometry.dispose();
+    if (child.material) {
+      if (Array.isArray(child.material)) {
+        child.material.forEach((material) => material.dispose());
+      } else {
+        child.material.dispose();
+      }
+    }
+  });
+}
+
+function clearModel3dGroup() {
+  while (model3dGroup.children.length) {
+    const child = model3dGroup.children.pop();
+    disposeModel3dObject(child);
+  }
+}
+
+function addModel3dBox(size, position, material, rotation = [0, 0, 0], edgeColor = "#30261e") {
+  const THREE = threeModule;
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(size[0], size[1], size[2]), material);
+  mesh.position.set(position[0], position[1], position[2]);
+  mesh.rotation.set(rotation[0], rotation[1], rotation[2]);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  model3dGroup.add(mesh);
+
+  const edges = new THREE.LineSegments(
+    new THREE.EdgesGeometry(mesh.geometry),
+    new THREE.LineBasicMaterial({ color: edgeColor, transparent: true, opacity: 0.58 })
+  );
+  edges.position.copy(mesh.position);
+  edges.rotation.copy(mesh.rotation);
+  model3dGroup.add(edges);
+  return mesh;
+}
+
+function getActiveModel3dSlot() {
+  return refs.model3dModal.classList.contains("open")
+    ? refs.model3dModalSlot
+    : refs.windowModel3dSlot;
+}
+
+function stopModel3dInertia() {
+  if (model3dInertiaFrame) {
+    cancelAnimationFrame(model3dInertiaFrame);
+    model3dInertiaFrame = 0;
+  }
+}
+
+function startModel3dInertia() {
+  stopModel3dInertia();
+  if (Math.abs(model3dVelocityY) < 0.0008) return;
+
+  const step = () => {
+    if (!model3dGroup || model3dPointer) {
+      model3dInertiaFrame = 0;
+      return;
+    }
+
+    model3dGroup.rotation.y += model3dVelocityY;
+    model3dVelocityY *= 0.92;
+    renderModel3dScene();
+
+    if (Math.abs(model3dVelocityY) >= 0.0008) {
+      model3dInertiaFrame = requestAnimationFrame(step);
+    } else {
+      model3dVelocityY = 0;
+      model3dInertiaFrame = 0;
+    }
+  };
+
+  model3dInertiaFrame = requestAnimationFrame(step);
+}
+
+function resetModel3dView() {
+  stopModel3dInertia();
+  model3dVelocityY = 0;
+  model3dZoom = 1;
+  if (model3dGroup) {
+    model3dGroup.rotation.x = 0;
+    model3dGroup.rotation.y = -0.58;
+  }
+  renderModel3dScene();
+}
+
+function openModel3dModal() {
+  stopModel3dInertia();
+  refs.model3dModal.classList.add("open");
+  refs.model3dModal.setAttribute("aria-hidden", "false");
+  refs.model3dModalSlot.appendChild(refs.windowModel3dCanvas);
+  renderModel3dScene();
+}
+
+function closeModel3dModal() {
+  stopModel3dInertia();
+  refs.model3dModal.classList.remove("open");
+  refs.model3dModal.setAttribute("aria-hidden", "true");
+  refs.windowModel3dSlot.appendChild(refs.windowModel3dCanvas);
+  renderModel3dScene();
+}
+
+function updateModel3dCamera() {
+  if (!model3dCamera) return;
+  const aspect = model3dCamera.aspect || 1;
+  const viewSize = model3dBaseDistance * model3dZoom;
+  const halfWidth = (viewSize * aspect) / 2;
+  const halfHeight = viewSize / 2;
+  const cameraDistance = Math.max(viewSize * 2.8, 4);
+
+  model3dCamera.left = -halfWidth;
+  model3dCamera.right = halfWidth;
+  model3dCamera.top = halfHeight;
+  model3dCamera.bottom = -halfHeight;
+  model3dCamera.near = Math.max(0.01, cameraDistance / 120);
+  model3dCamera.far = cameraDistance * 12;
+  model3dCamera.up.set(0, 1, 0);
+  model3dCamera.position.set(cameraDistance, cameraDistance * 1.08, cameraDistance);
+  model3dCamera.lookAt(0, 0, 0.12);
+  model3dCamera.updateProjectionMatrix();
+}
+
+function resizeModel3dRenderer() {
+  if (!model3dRenderer) return;
+  const rect = getActiveModel3dSlot().getBoundingClientRect();
+  const width = Math.max(1, Math.floor(rect.width));
+  const height = Math.max(1, Math.floor(rect.height));
+  model3dRenderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  model3dRenderer.setSize(width, height, false);
+  model3dCamera.aspect = width / height;
+  updateModel3dCamera();
+}
+
+function renderModel3dScene() {
+  if (!model3dRenderer || !model3dScene || !model3dCamera) return;
+  resizeModel3dRenderer();
+  model3dRenderer.render(model3dScene, model3dCamera);
+}
+
+function initModel3dScene() {
+  if (model3dRenderer) return;
+
+  const THREE = threeModule;
+  model3dScene = new THREE.Scene();
+  model3dScene.background = new THREE.Color(0xefe7da);
+
+  model3dCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 100);
+  model3dRenderer = new THREE.WebGLRenderer({
+    canvas: refs.windowModel3dCanvas,
+    antialias: true,
+    preserveDrawingBuffer: true
+  });
+  model3dRenderer.shadowMap.enabled = true;
+  model3dRenderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  const ambient = new THREE.HemisphereLight(0xffffff, 0x9b866d, 1.8);
+  model3dScene.add(ambient);
+
+  const keyLight = new THREE.DirectionalLight(0xffffff, 2.1);
+  keyLight.position.set(3, 4, 5);
+  keyLight.castShadow = true;
+  model3dScene.add(keyLight);
+
+  model3dGroup = new THREE.Group();
+  model3dGroup.rotation.x = 0;
+  model3dGroup.rotation.y = -0.58;
+  model3dScene.add(model3dGroup);
+
+  refs.windowModel3dCanvas.addEventListener("pointerdown", (event) => {
+    stopModel3dInertia();
+    model3dVelocityY = 0;
+    model3dPointer = { x: event.clientX, y: event.clientY };
+    refs.windowModel3dCanvas.setPointerCapture(event.pointerId);
+  });
+
+  refs.windowModel3dCanvas.addEventListener("pointermove", (event) => {
+    if (!model3dPointer) return;
+    const dx = event.clientX - model3dPointer.x;
+    const deltaRotation = dx * 0.009;
+    model3dPointer = { x: event.clientX, y: event.clientY };
+    model3dGroup.rotation.y += deltaRotation;
+    model3dVelocityY = model3dVelocityY * 0.45 + deltaRotation * 0.55;
+    renderModel3dScene();
+  });
+
+  refs.windowModel3dCanvas.addEventListener("pointerup", (event) => {
+    if (refs.windowModel3dCanvas.hasPointerCapture(event.pointerId)) {
+      refs.windowModel3dCanvas.releasePointerCapture(event.pointerId);
+    }
+    model3dPointer = null;
+    startModel3dInertia();
+  });
+
+  refs.windowModel3dCanvas.addEventListener("pointercancel", () => {
+    model3dPointer = null;
+    model3dVelocityY = 0;
+    stopModel3dInertia();
+  });
+
+  refs.windowModel3dCanvas.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    const direction = event.deltaY > 0 ? 1.08 : 0.92;
+    model3dZoom = clamp(model3dZoom * direction, 0.18, 2.4);
+    renderModel3dScene();
+  }, { passive: false });
+}
+
+function rebuildModel3d(state) {
+  if (!model3dGroup) return;
+  clearModel3dGroup();
+
+  const THREE = threeModule;
+  const { largura, altura } = state.janela;
+  const horizontal = state.briseHorizontal;
+  const verticalLeft = state.briseVertical.esquerdo;
+  const verticalRight = state.briseVertical.direito;
+  const marquise = state.marquise;
+
+  const wallMaterial = new THREE.MeshStandardMaterial({ color: 0xd7c6ad, roughness: 0.86 });
+  const glassMaterial = new THREE.MeshStandardMaterial({
+    color: 0x89cce0,
+    roughness: 0.18,
+    metalness: 0.02,
+    transparent: true,
+    opacity: 0.42,
+    depthWrite: false,
+    side: THREE.DoubleSide
+  });
+  const horizontalMaterial = new THREE.MeshStandardMaterial({ color: MODEL_COLORS.horizontal, roughness: 0.55, metalness: 0.05 });
+  const verticalMaterial = new THREE.MeshStandardMaterial({ color: MODEL_COLORS.vertical, roughness: 0.55, metalness: 0.05 });
+  const marquiseMaterial = new THREE.MeshStandardMaterial({ color: MODEL_COLORS.marquise, roughness: 0.58, metalness: 0.05 });
+  const wallThickness = 0.12;
+  const wallFrontZ = wallThickness / 2;
+
+  const topPadding = Math.max(
+    0.35,
+    horizontal.ativo ? horizontal.espessura + 0.2 : 0,
+    verticalLeft.ativo ? verticalLeft.top + 0.18 : 0,
+    verticalRight.ativo ? verticalRight.top + 0.18 : 0,
+    marquise.ativo ? marquise.offsetTopo + marquise.espessura + 0.26 : 0
+  );
+  const bottomPadding = 0.25;
+  const sidePadding = Math.max(
+    0.36,
+    horizontal.ativo ? horizontal.sobreposicao + 0.22 : 0,
+    marquise.ativo ? marquise.sobreposicao + 0.22 : 0,
+    verticalLeft.ativo ? verticalLeft.offset + verticalLeft.espessura + 0.24 : 0,
+    verticalRight.ativo ? verticalRight.offset + verticalRight.espessura + 0.24 : 0
+  );
+
+  const wallWidth = largura + sidePadding * 2;
+  const wallHeight = altura + topPadding + bottomPadding;
+  const wallCenterY = (altura + topPadding - bottomPadding) / 2 - altura / 2;
+
+  if (sidePadding > 0) {
+    addModel3dBox([sidePadding, wallHeight, wallThickness], [-largura / 2 - sidePadding / 2, wallCenterY, 0], wallMaterial, [0, 0, 0], "#8e7b62");
+    addModel3dBox([sidePadding, wallHeight, wallThickness], [largura / 2 + sidePadding / 2, wallCenterY, 0], wallMaterial, [0, 0, 0], "#8e7b62");
+  }
+  if (topPadding > 0) {
+    addModel3dBox([largura, topPadding, wallThickness], [0, altura / 2 + topPadding / 2, 0], wallMaterial, [0, 0, 0], "#8e7b62");
+  }
+  if (bottomPadding > 0) {
+    addModel3dBox([largura, bottomPadding, wallThickness], [0, -altura / 2 - bottomPadding / 2, 0], wallMaterial, [0, 0, 0], "#8e7b62");
+  }
+
+  addModel3dBox([largura, altura, 0.018], [0, 0, 0], glassMaterial, [0, 0, 0], "#2f5c68");
+
+  if (marquise.ativo && marquise.projecao > 0) {
+    const canopyThickness = Math.max(0.001, marquise.espessura || 0.001);
+    addModel3dBox(
+      [largura + marquise.sobreposicao * 2, canopyThickness, marquise.projecao],
+      [0, altura / 2 + marquise.offsetTopo + canopyThickness / 2, wallFrontZ + marquise.projecao / 2],
+      marquiseMaterial,
+      [0, 0, 0],
+      "#1d4d66"
+    );
+  }
+
+  const addSideFin = (fin, isLeft) => {
+    if (!fin.ativo || fin.projecao <= 0) return;
+    const finThickness = Math.max(0.001, fin.espessura || 0.001);
+    const finHeight = Math.max(0.05, altura + fin.top);
+    const xCoord = isLeft ? -fin.offset - finThickness / 2 : largura + fin.offset + finThickness / 2;
+    const centerY = (altura + fin.top) / 2 - altura / 2;
+    addModel3dBox(
+      [finThickness, finHeight, fin.projecao],
+      [xCoord - largura / 2, centerY, wallFrontZ + fin.projecao / 2],
+      verticalMaterial,
+      [0, 0, 0],
+      "#1f4a38"
+    );
+  };
+  addSideFin(verticalLeft, true);
+  addSideFin(verticalRight, false);
+
+  if (horizontal.ativo && horizontal.profundidade > 0) {
+    const angle = horizontal.angulo * DEG;
+    const louvreWidth = largura + horizontal.sobreposicao * 2;
+    const louvreThickness = Math.max(0.001, horizontal.espessura || 0.001);
+    const louvreDepth = Math.max(0.025, horizontal.profundidade);
+
+    for (let i = 0; i < horizontal.numero; i += 1) {
+      const zBack = getHorizontalLouvreVerticalPlacement(state, i);
+      const centerY = zBack - Math.sin(angle) * louvreDepth / 2 - altura / 2;
+      const centerZ = wallFrontZ + horizontal.distancia + Math.cos(angle) * louvreDepth / 2;
+      addModel3dBox(
+        [louvreWidth, louvreThickness, louvreDepth],
+        [0, centerY, centerZ],
+        horizontalMaterial,
+        [angle, 0, 0],
+        "#6e2b19"
+      );
+    }
+  }
+
+  const depthSpan = Math.max(
+    0.5,
+    wallThickness,
+    horizontal.ativo ? wallFrontZ + horizontal.distancia + horizontal.profundidade : 0,
+    marquise.ativo ? wallFrontZ + marquise.projecao : 0,
+    verticalLeft.ativo ? wallFrontZ + verticalLeft.projecao : 0,
+    verticalRight.ativo ? wallFrontZ + verticalRight.projecao : 0
+  );
+  const modelSpan = Math.max(wallWidth, wallHeight, depthSpan * 1.8);
+  model3dBaseDistance = modelSpan * 1.35;
+
+  const grid = new THREE.GridHelper(Math.max(modelSpan * 1.7, 2), 12, 0xb9a991, 0xd1c6b6);
+  grid.position.y = -altura / 2 - bottomPadding - 0.015;
+  grid.position.z = depthSpan * 0.45;
+  model3dGroup.add(grid);
+}
+
+function renderWindowModel3d(state = getState()) {
+  if (!threeModule || !refs.windowModel3dCanvas) return;
+  initModel3dScene();
+  rebuildModel3d(state);
+  refs.windowModel3dStatus.textContent = `Janela ${state.janela.largura.toFixed(2)} m x ${state.janela.altura.toFixed(2)} m`;
+  renderModel3dScene();
+}
+
+async function initWindowModel3d() {
+  if (!refs.windowModel3dCanvas) return;
+  refs.windowModel3dStatus.textContent = "Carregando Three.js...";
+
+  try {
+    await loadThreeModule();
+    renderWindowModel3d();
+  } catch (error) {
+    console.error(error);
+  }
 }
 
 function getSafeFilePart(value) {
@@ -1065,6 +1764,47 @@ function drawExportSolarCanvas(context, parentRect) {
   context.stroke();
 }
 
+function drawExportHeatScale(context, parentRect) {
+  const scale = refs.chartCard.querySelector(".heat-scale");
+  if (!scale) return;
+
+  const scaleStyle = window.getComputedStyle(scale);
+  const title = scale.querySelector(".heat-scale-title");
+  const bar = scale.querySelector(".heat-scale-bar");
+  const ticks = scale.querySelector(".heat-scale-ticks");
+  const titleRect = getRelativeRect(title, parentRect);
+  const barRect = getRelativeRect(bar, parentRect);
+  const isHorizontal = barRect.w > barRect.h;
+  const gradient = isHorizontal
+    ? context.createLinearGradient(barRect.x, 0, barRect.x + barRect.w, 0)
+    : context.createLinearGradient(0, barRect.y + barRect.h, 0, barRect.y);
+
+  gradient.addColorStop(0, "rgba(186, 77, 45, 0.12)");
+  gradient.addColorStop(0.34, "rgba(226, 163, 88, 0.38)");
+  gradient.addColorStop(0.66, "rgba(206, 112, 54, 0.56)");
+  gradient.addColorStop(1, "rgba(186, 77, 45, 0.72)");
+
+  context.fillStyle = scaleStyle.color;
+  context.font = `700 ${scaleStyle.fontSize} ${scaleStyle.fontFamily}`;
+  context.textBaseline = "top";
+  context.fillText(title.innerText.trim(), titleRect.x, titleRect.y);
+
+  context.fillStyle = gradient;
+  drawRoundedRect(context, barRect.x, barRect.y, barRect.w, barRect.h, 6);
+  context.fill();
+  context.strokeStyle = "rgba(126, 81, 52, 0.35)";
+  context.lineWidth = 1;
+  context.stroke();
+
+  const tickStyle = window.getComputedStyle(ticks);
+  context.fillStyle = tickStyle.color;
+  context.font = `${tickStyle.fontWeight} ${tickStyle.fontSize} ${tickStyle.fontFamily}`;
+  ticks.querySelectorAll("span").forEach((tick) => {
+    const tickRect = getRelativeRect(tick, parentRect);
+    context.fillText(tick.innerText.trim(), tickRect.x, tickRect.y);
+  });
+}
+
 function drawExportLegend(context, parentRect) {
   const legend = refs.chartCard.querySelector(".legend");
   const legendStyle = window.getComputedStyle(legend);
@@ -1144,6 +1884,7 @@ function downloadSolarChartImage() {
   drawElementText(exportCtx, refs.chartCard.querySelector(".chart-head h2"), cardRect);
   drawElementText(exportCtx, refs.chartCard.querySelector(".chart-head p"), cardRect);
   drawExportSolarCanvas(exportCtx, cardRect);
+  drawExportHeatScale(exportCtx, cardRect);
   drawExportLegend(exportCtx, cardRect);
   drawExportSummary(exportCtx, cardRect);
 
@@ -1167,7 +1908,7 @@ function resizeCanvasForDpr() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
-function render() {
+function render({ updateMask = true } = {}) {
   resizeCanvasForDpr();
   updateBriseSpacingDisplay();
   const state = getState();
@@ -1180,12 +1921,23 @@ function render() {
   drawBaseChart(center, radius);
   drawSolarDatePaths(state, center, radius);
   drawHourLines(state, center, radius);
-  const stats = drawShadeMask(state, center, radius);
+  const shouldCalculateMask = updateMask || !lastMaskSamples.length;
+  const stats = shouldCalculateMask
+    ? drawShadeMask(state, center, radius)
+    : drawCachedShadeMask(state, center, radius);
+  if (shouldCalculateMask) {
+    lastMaskStats = stats;
+  }
+  if (updateMask) {
+    maskNeedsUpdate = false;
+    setMaskUpdateOverlay(false);
+  }
   drawSolarMonthLabels(state, center, radius);
   drawFacadePlaneLine(state, center, radius);
   drawFacadeDirection(state, center, radius);
   updateSummary(state, stats);
   renderWindowShadow(state);
+  renderWindowModel3d(state);
 }
 
 function scheduleRender() {
@@ -1194,6 +1946,19 @@ function scheduleRender() {
     renderFrame = 0;
     render();
   });
+}
+
+function updateMaskFromUserAction() {
+  if (isUpdatingMask) return;
+  setUiBlocked(true);
+  window.setTimeout(() => {
+    try {
+      render({ updateMask: true });
+      saveAppConfig();
+    } finally {
+      setUiBlocked(false);
+    }
+  }, 40);
 }
 
 function updateBriseSpacingDisplay() {
@@ -1228,11 +1993,25 @@ function bindInputs() {
   const inputs = document.querySelectorAll("input");
   inputs.forEach((input) => {
     input.addEventListener("input", () => {
-      render();
+      if (input === refs.orientacao) {
+        render({ updateMask: false });
+        saveAppConfig();
+        return;
+      }
+
+      renderLiveSurfaces();
+      markMaskNeedsUpdate();
       saveAppConfig();
     });
     input.addEventListener("change", () => {
-      render();
+      if (input === refs.orientacao) {
+        render({ updateMask: false });
+        saveAppConfig();
+        return;
+      }
+
+      renderLiveSurfaces();
+      markMaskNeedsUpdate();
       saveAppConfig();
     });
   });
@@ -1251,7 +2030,8 @@ function bindInputs() {
     refs.cidade.value = city;
     refs.cidade.disabled = true;
     refs.latitude.disabled = true;
-    render();
+    renderLiveSurfaces();
+    markMaskNeedsUpdate();
     saveAppConfig();
   });
 
@@ -1270,6 +2050,14 @@ function bindInputs() {
   window.addEventListener("resize", scheduleRender);
 
   refs.downloadSolarChart.addEventListener("click", downloadSolarChartImage);
+  refs.updateMaskButton.addEventListener("click", updateMaskFromUserAction);
+  refs.resetModel3dView.addEventListener("click", resetModel3dView);
+  refs.resetModel3dViewModal.addEventListener("click", resetModel3dView);
+  refs.expandModel3d.addEventListener("click", openModel3dModal);
+  refs.closeModel3dModal.addEventListener("click", closeModel3dModal);
+  refs.model3dModal.addEventListener("click", (event) => {
+    if (event.target === refs.model3dModal) closeModel3dModal();
+  });
   refs.openWindowShadow.addEventListener("click", openWindowShadowModal);
   refs.closeWindowShadow.addEventListener("click", closeWindowShadowModal);
   refs.windowShadowModal.addEventListener("click", (event) => {
@@ -1295,6 +2083,8 @@ function initLayoutObservers() {
     const observer = new ResizeObserver(scheduleRender);
     observer.observe(refs.canvas.parentElement);
     observer.observe(refs.chartCard);
+    observer.observe(refs.windowModel3dSlot);
+    observer.observe(refs.model3dModalSlot);
   }
 
   window.addEventListener("load", scheduleRender);
@@ -1317,4 +2107,5 @@ initApp();
 render();
 requestAnimationFrame(scheduleRender);
 initLayoutObservers();
+initWindowModel3d();
 initSplashScreen();
