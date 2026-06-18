@@ -39,23 +39,25 @@ const refs = {
   latDisplay: document.getElementById("lat-display"),
   resumo: document.getElementById("resumo"),
   canvas: document.getElementById("solar-canvas"),
+  shadowPointTooltip: document.getElementById("shadow-point-tooltip"),
   maskUpdateOverlay: document.getElementById("mask-update-overlay"),
   updateMaskButton: document.getElementById("update-mask-button"),
   chartCard: document.querySelector(".chart-card"),
   downloadSolarChart: document.getElementById("download-solar-chart"),
+  downloadSolarReport: document.getElementById("download-solar-report"),
   splashScreen: document.getElementById("splash-screen"),
   uiBlocker: document.getElementById("ui-blocker"),
 
   openWindowShadow: document.getElementById("open-window-shadow"),
   windowShadowModal: document.getElementById("window-shadow-modal"),
   closeWindowShadow: document.getElementById("close-window-shadow"),
+  windowShadow3dCanvas: document.getElementById("window-shadow-3d-canvas"),
   windowShadowCanvas: document.getElementById("window-shadow-canvas"),
   shadowDate: document.getElementById("shadow-date"),
   shadowTime: document.getElementById("shadow-time"),
   shadowDateText: document.getElementById("shadow-date-text"),
   shadowTimeText: document.getElementById("shadow-time-text"),
   windowShadowStatus: document.getElementById("window-shadow-status"),
-  showBrisesOverlay: document.getElementById("show-brises-overlay"),
 
   windowModel3dSlot: document.getElementById("window-model-3d-slot"),
   windowModel3dCanvas: document.getElementById("window-model-3d-canvas"),
@@ -76,6 +78,9 @@ let renderFrame = 0;
 let didRestoreConfig = false;
 const STORAGE_KEY = "briselab:lastConfig";
 const THREE_CDN_URL = "https://unpkg.com/three@0.165.0/build/three.module.js";
+const JSPDF_CDN_URL = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+const MODEL3D_DEFAULT_ROTATION_X = 0;
+const MODEL3D_DEFAULT_ROTATION_Y = -0.08;
 const MODEL_COLORS = {
   horizontal: 0xba4d2d,
   vertical: 0x35765e,
@@ -83,6 +88,7 @@ const MODEL_COLORS = {
 };
 let threeModule = null;
 let threeLoadPromise = null;
+let jsPdfLoadPromise = null;
 let model3dRenderer = null;
 let model3dScene = null;
 let model3dCamera = null;
@@ -92,6 +98,14 @@ let model3dZoom = 1;
 let model3dPointer = null;
 let model3dVelocityY = 0;
 let model3dInertiaFrame = 0;
+let shadowModel3dRenderer = null;
+let shadowModel3dScene = null;
+let shadowModel3dCamera = null;
+let shadowModel3dGroup = null;
+let shadowModel3dSunLight = null;
+let shadowModel3dBaseDistance = 4;
+let shadowModel3dRenderToken = 0;
+let orientationRenderFrame = 0;
 let maskNeedsUpdate = false;
 let isUpdatingMask = false;
 let lastMaskStats = { shadedPositions: 0, frontCount: 0, ratio: 0 };
@@ -915,6 +929,66 @@ function drawCachedShadeMask(state, center, radius) {
   return lastMaskStats;
 }
 
+function hideShadowPointTooltip() {
+  refs.shadowPointTooltip.classList.remove("open", "below");
+  refs.shadowPointTooltip.setAttribute("aria-hidden", "true");
+}
+
+function getRenderedShadeSampleAt(clientX, clientY) {
+  if (!lastMaskSamples.length || refs.maskUpdateOverlay.classList.contains("open")) return null;
+
+  const state = getState();
+  const canvasRect = refs.canvas.getBoundingClientRect();
+  const x = clientX - canvasRect.left;
+  const y = clientY - canvasRect.top;
+  const center = { x: canvasRect.width / 2, y: canvasRect.height / 2 };
+  const radius = Math.min(canvasRect.width, canvasRect.height) * 0.44;
+  let closest = null;
+  let closestDistanceSq = Infinity;
+
+  lastMaskSamples.forEach((sample) => {
+    const p = stereographicProject(sample.alt, state.local.orientacao + sample.relativeAz, center, radius);
+    const dotRadius = 1.8 + sample.shadeRatio * 3.2;
+    const hitRadius = Math.max(8, dotRadius + 4);
+    const dx = x - p.x;
+    const dy = y - p.y;
+    const distanceSq = dx * dx + dy * dy;
+
+    if (distanceSq <= hitRadius * hitRadius && distanceSq < closestDistanceSq) {
+      closest = { sample, point: p };
+      closestDistanceSq = distanceSq;
+    }
+  });
+
+  if (!closest) return null;
+
+  const slotRect = refs.canvas.parentElement.getBoundingClientRect();
+  return {
+    sample: closest.sample,
+    x: canvasRect.left - slotRect.left + closest.point.x,
+    y: canvasRect.top - slotRect.top + closest.point.y,
+    slotWidth: slotRect.width,
+    slotHeight: slotRect.height
+  };
+}
+
+function updateShadowPointTooltip(event) {
+  const hit = getRenderedShadeSampleAt(event.clientX, event.clientY);
+  if (!hit) {
+    hideShadowPointTooltip();
+    return;
+  }
+
+  const left = clamp(hit.x, 56, Math.max(56, hit.slotWidth - 56));
+  const top = clamp(hit.y, 16, Math.max(16, hit.slotHeight - 16));
+  refs.shadowPointTooltip.textContent = `${(hit.sample.shadeRatio * 100).toFixed(1)}% sombreado`;
+  refs.shadowPointTooltip.style.left = `${left}px`;
+  refs.shadowPointTooltip.style.top = `${top}px`;
+  refs.shadowPointTooltip.classList.toggle("below", hit.y < 42);
+  refs.shadowPointTooltip.classList.add("open");
+  refs.shadowPointTooltip.setAttribute("aria-hidden", "false");
+}
+
 function updateSummary(state, maskStats) {
   updateChartHeader(state);
 
@@ -953,6 +1027,7 @@ function setUiBlocked(blocked) {
 
 function markMaskNeedsUpdate() {
   maskNeedsUpdate = true;
+  hideShadowPointTooltip();
   setMaskUpdateOverlay(true);
 }
 
@@ -1019,15 +1094,15 @@ function estimateBlockedDirectSunHours(state) {
   };
 }
 
-function getShadowSun(state) {
-  const day = Number(refs.shadowDate.value);
-  const hour = Number(refs.shadowTime.value);
+function getShadowSunForMoment(state, day, hour, options = {}) {
   const declination = declinationFromDay(day);
   const hourAngle = (hour - 12) * 15;
   const position = solarPositionFromDecHour(state.local.latitude, declination, hourAngle);
 
-  refs.shadowDateText.textContent = formatDayOfYear(day);
-  refs.shadowTimeText.textContent = formatSolarTime(hour);
+  if (options.updateControls) {
+    refs.shadowDateText.textContent = formatDayOfYear(day);
+    refs.shadowTimeText.textContent = formatSolarTime(hour);
+  }
 
   if (!position) {
     return { position: null, sun: null, direct: false, reason: "Sol abaixo do horizonte." };
@@ -1043,6 +1118,39 @@ function getShadowSun(state) {
     direct,
     reason: direct ? "" : "Sol sem incidência direta na fachada."
   };
+}
+
+function getShadowSun(state) {
+  return getShadowSunForMoment(
+    state,
+    Number(refs.shadowDate.value),
+    Number(refs.shadowTime.value),
+    { updateControls: true }
+  );
+}
+
+function setShadowRangeValue(input, value) {
+  const min = Number(input.min);
+  const max = Number(input.max);
+  const step = Number(input.step) || 1;
+  const stepped = Math.round(Number(value) / step) * step;
+  input.value = String(clamp(stepped, min, max));
+}
+
+function updateWindowShadowControls() {
+  renderWindowShadow();
+  saveAppConfig();
+}
+
+function shiftShadowControl(kind, delta) {
+  const input = kind === "date" ? refs.shadowDate : refs.shadowTime;
+  setShadowRangeValue(input, Number(input.value) + Number(delta));
+  updateWindowShadowControls();
+}
+
+function jumpToShadowDate(day) {
+  setShadowRangeValue(refs.shadowDate, Number(day));
+  updateWindowShadowControls();
 }
 
 function resizeShadowCanvasForDpr() {
@@ -1275,23 +1383,16 @@ function drawBrisesOnWindowPreview(rect, state) {
 function renderWindowShadow(state = getState()) {
   if (!refs.windowShadowModal.classList.contains("open")) return;
 
-  const { width, height } = resizeShadowCanvasForDpr();
-  const rect = getWindowPreviewRect(width, height, state);
   const solar = getShadowSun(state);
 
-  shadowCtx.clearRect(0, 0, width, height);
-  drawWindowPreviewBase(rect, state, solar.direct);
-
   if (solar.direct) {
-    const ratio = drawWindowShadowMask(rect, state, solar.sun);
+    const ratio = getWindowShadeRatioForSun(solar.sun, state, 43, 43);
     refs.windowShadowStatus.textContent = `Área sombreada pelos brises: ${(ratio * 100).toFixed(1)}%`;
   } else {
     refs.windowShadowStatus.textContent = solar.reason;
   }
 
-  if (refs.showBrisesOverlay.checked) {
-    drawBrisesOnWindowPreview(rect, state);
-  }
+  renderWindowShadow3d(state, solar);
 }
 
 function openWindowShadowModal() {
@@ -1335,21 +1436,22 @@ function disposeModel3dObject(object) {
   });
 }
 
-function clearModel3dGroup() {
-  while (model3dGroup.children.length) {
-    const child = model3dGroup.children.pop();
+function clearModel3dGroup(targetGroup = model3dGroup) {
+  if (!targetGroup) return;
+  while (targetGroup.children.length) {
+    const child = targetGroup.children.pop();
     disposeModel3dObject(child);
   }
 }
 
-function addModel3dBox(size, position, material, rotation = [0, 0, 0], edgeColor = "#30261e") {
+function addModel3dBox(size, position, material, rotation = [0, 0, 0], edgeColor = "#30261e", targetGroup = model3dGroup) {
   const THREE = threeModule;
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(size[0], size[1], size[2]), material);
   mesh.position.set(position[0], position[1], position[2]);
   mesh.rotation.set(rotation[0], rotation[1], rotation[2]);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
-  model3dGroup.add(mesh);
+  targetGroup.add(mesh);
 
   const edges = new THREE.LineSegments(
     new THREE.EdgesGeometry(mesh.geometry),
@@ -1357,7 +1459,53 @@ function addModel3dBox(size, position, material, rotation = [0, 0, 0], edgeColor
   );
   edges.position.copy(mesh.position);
   edges.rotation.copy(mesh.rotation);
-  model3dGroup.add(edges);
+  targetGroup.add(edges);
+  return mesh;
+}
+
+function addModel3dWallFrame(frame, material, edgeColor = "#8e7b62", targetGroup = model3dGroup) {
+  const THREE = threeModule;
+  const outerLeft = -frame.width / 2;
+  const outerRight = frame.width / 2;
+  const outerBottom = frame.centerY - frame.height / 2;
+  const outerTop = frame.centerY + frame.height / 2;
+  const openingLeft = -frame.openingWidth / 2;
+  const openingRight = frame.openingWidth / 2;
+  const openingBottom = -frame.openingHeight / 2;
+  const openingTop = frame.openingHeight / 2;
+
+  const shape = new THREE.Shape();
+  shape.moveTo(outerLeft, outerBottom);
+  shape.lineTo(outerRight, outerBottom);
+  shape.lineTo(outerRight, outerTop);
+  shape.lineTo(outerLeft, outerTop);
+  shape.lineTo(outerLeft, outerBottom);
+
+  const opening = new THREE.Path();
+  opening.moveTo(openingLeft, openingBottom);
+  opening.lineTo(openingLeft, openingTop);
+  opening.lineTo(openingRight, openingTop);
+  opening.lineTo(openingRight, openingBottom);
+  opening.lineTo(openingLeft, openingBottom);
+  shape.holes.push(opening);
+
+  const geometry = new THREE.ExtrudeGeometry(shape, {
+    depth: frame.thickness,
+    bevelEnabled: false,
+    steps: 1
+  });
+  geometry.translate(0, 0, -frame.thickness / 2);
+
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  targetGroup.add(mesh);
+
+  const edges = new THREE.LineSegments(
+    new THREE.EdgesGeometry(geometry),
+    new THREE.LineBasicMaterial({ color: edgeColor, transparent: true, opacity: 0.58 })
+  );
+  targetGroup.add(edges);
   return mesh;
 }
 
@@ -1404,8 +1552,8 @@ function resetModel3dView() {
   model3dVelocityY = 0;
   model3dZoom = 1;
   if (model3dGroup) {
-    model3dGroup.rotation.x = 0;
-    model3dGroup.rotation.y = -0.58;
+    model3dGroup.rotation.x = MODEL3D_DEFAULT_ROTATION_X;
+    model3dGroup.rotation.y = MODEL3D_DEFAULT_ROTATION_Y;
   }
   renderModel3dScene();
 }
@@ -1426,7 +1574,7 @@ function closeModel3dModal() {
   renderModel3dScene();
 }
 
-function updateModel3dCamera() {
+function updateModel3dCamera(cameraView = "perspective") {
   if (!model3dCamera) return;
   const aspect = model3dCamera.aspect || 1;
   const viewSize = model3dBaseDistance * model3dZoom;
@@ -1441,12 +1589,20 @@ function updateModel3dCamera() {
   model3dCamera.near = Math.max(0.01, cameraDistance / 120);
   model3dCamera.far = cameraDistance * 12;
   model3dCamera.up.set(0, 1, 0);
-  model3dCamera.position.set(cameraDistance, cameraDistance * 1.08, cameraDistance);
+
+  if (cameraView === "front") {
+    model3dCamera.position.set(0, 0, cameraDistance);
+  } else if (cameraView === "side") {
+    model3dCamera.position.set(cameraDistance, 0, 0.12);
+  } else {
+    model3dCamera.position.set(cameraDistance, cameraDistance * 1.08, cameraDistance);
+  }
+
   model3dCamera.lookAt(0, 0, 0.12);
   model3dCamera.updateProjectionMatrix();
 }
 
-function resizeModel3dRenderer() {
+function resizeModel3dRenderer(cameraView = "perspective") {
   if (!model3dRenderer) return;
   const rect = getActiveModel3dSlot().getBoundingClientRect();
   const width = Math.max(1, Math.floor(rect.width));
@@ -1454,12 +1610,12 @@ function resizeModel3dRenderer() {
   model3dRenderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   model3dRenderer.setSize(width, height, false);
   model3dCamera.aspect = width / height;
-  updateModel3dCamera();
+  updateModel3dCamera(cameraView);
 }
 
-function renderModel3dScene() {
+function renderModel3dScene(cameraView = "perspective") {
   if (!model3dRenderer || !model3dScene || !model3dCamera) return;
-  resizeModel3dRenderer();
+  resizeModel3dRenderer(cameraView);
   model3dRenderer.render(model3dScene, model3dCamera);
 }
 
@@ -1488,8 +1644,8 @@ function initModel3dScene() {
   model3dScene.add(keyLight);
 
   model3dGroup = new THREE.Group();
-  model3dGroup.rotation.x = 0;
-  model3dGroup.rotation.y = -0.58;
+  model3dGroup.rotation.x = MODEL3D_DEFAULT_ROTATION_X;
+  model3dGroup.rotation.y = MODEL3D_DEFAULT_ROTATION_Y;
   model3dScene.add(model3dGroup);
 
   refs.windowModel3dCanvas.addEventListener("pointerdown", (event) => {
@@ -1531,11 +1687,13 @@ function initModel3dScene() {
   }, { passive: false });
 }
 
-function rebuildModel3d(state) {
-  if (!model3dGroup) return;
-  clearModel3dGroup();
+function rebuildModel3d(state, targetGroup = model3dGroup, options = {}) {
+  if (!targetGroup) return null;
+  clearModel3dGroup(targetGroup);
 
   const THREE = threeModule;
+  const addBox = (size, position, material, rotation = [0, 0, 0], edgeColor = "#30261e") =>
+    addModel3dBox(size, position, material, rotation, edgeColor, targetGroup);
   const { largura, altura } = state.janela;
   const horizontal = state.briseHorizontal;
   const verticalLeft = state.briseVertical.esquerdo;
@@ -1578,22 +1736,20 @@ function rebuildModel3d(state) {
   const wallHeight = altura + topPadding + bottomPadding;
   const wallCenterY = (altura + topPadding - bottomPadding) / 2 - altura / 2;
 
-  if (sidePadding > 0) {
-    addModel3dBox([sidePadding, wallHeight, wallThickness], [-largura / 2 - sidePadding / 2, wallCenterY, 0], wallMaterial, [0, 0, 0], "#8e7b62");
-    addModel3dBox([sidePadding, wallHeight, wallThickness], [largura / 2 + sidePadding / 2, wallCenterY, 0], wallMaterial, [0, 0, 0], "#8e7b62");
-  }
-  if (topPadding > 0) {
-    addModel3dBox([largura, topPadding, wallThickness], [0, altura / 2 + topPadding / 2, 0], wallMaterial, [0, 0, 0], "#8e7b62");
-  }
-  if (bottomPadding > 0) {
-    addModel3dBox([largura, bottomPadding, wallThickness], [0, -altura / 2 - bottomPadding / 2, 0], wallMaterial, [0, 0, 0], "#8e7b62");
-  }
+  addModel3dWallFrame({
+    width: wallWidth,
+    height: wallHeight,
+    centerY: wallCenterY,
+    openingWidth: largura,
+    openingHeight: altura,
+    thickness: wallThickness
+  }, wallMaterial, "#8e7b62", targetGroup);
 
-  addModel3dBox([largura, altura, 0.018], [0, 0, 0], glassMaterial, [0, 0, 0], "#2f5c68");
+  addBox([largura, altura, 0.018], [0, 0, 0], glassMaterial, [0, 0, 0], "#2f5c68");
 
   if (marquise.ativo && marquise.projecao > 0) {
     const canopyThickness = Math.max(0.001, marquise.espessura || 0.001);
-    addModel3dBox(
+    addBox(
       [largura + marquise.sobreposicao * 2, canopyThickness, marquise.projecao],
       [0, altura / 2 + marquise.offsetTopo + canopyThickness / 2, wallFrontZ + marquise.projecao / 2],
       marquiseMaterial,
@@ -1608,7 +1764,7 @@ function rebuildModel3d(state) {
     const finHeight = Math.max(0.05, altura + fin.top);
     const xCoord = isLeft ? -fin.offset - finThickness / 2 : largura + fin.offset + finThickness / 2;
     const centerY = (altura + fin.top) / 2 - altura / 2;
-    addModel3dBox(
+    addBox(
       [finThickness, finHeight, fin.projecao],
       [xCoord - largura / 2, centerY, wallFrontZ + fin.projecao / 2],
       verticalMaterial,
@@ -1629,7 +1785,7 @@ function rebuildModel3d(state) {
       const zBack = getHorizontalLouvreVerticalPlacement(state, i);
       const centerY = zBack - Math.sin(angle) * louvreDepth / 2 - altura / 2;
       const centerZ = wallFrontZ + horizontal.distancia + Math.cos(angle) * louvreDepth / 2;
-      addModel3dBox(
+      addBox(
         [louvreWidth, louvreThickness, louvreDepth],
         [0, centerY, centerZ],
         horizontalMaterial,
@@ -1648,12 +1804,18 @@ function rebuildModel3d(state) {
     verticalRight.ativo ? wallFrontZ + verticalRight.projecao : 0
   );
   const modelSpan = Math.max(wallWidth, wallHeight, depthSpan * 1.8);
-  model3dBaseDistance = modelSpan * 1.35;
+  if (options.updateBaseDistance !== false) {
+    model3dBaseDistance = modelSpan * 1.35;
+  }
 
-  const grid = new THREE.GridHelper(Math.max(modelSpan * 1.7, 2), 12, 0xb9a991, 0xd1c6b6);
-  grid.position.y = -altura / 2 - bottomPadding - 0.015;
-  grid.position.z = depthSpan * 0.45;
-  model3dGroup.add(grid);
+  if (options.includeGrid !== false) {
+    const grid = new THREE.GridHelper(Math.max(modelSpan * 1.7, 2), 12, 0xb9a991, 0xd1c6b6);
+    grid.position.y = -altura / 2 - bottomPadding - 0.015;
+    grid.position.z = depthSpan * 0.45;
+    targetGroup.add(grid);
+  }
+
+  return { modelSpan, depthSpan, wallWidth, wallHeight };
 }
 
 function renderWindowModel3d(state = getState()) {
@@ -1674,6 +1836,192 @@ async function initWindowModel3d() {
   } catch (error) {
     console.error(error);
   }
+}
+
+function initWindowShadow3dScene() {
+  if (shadowModel3dRenderer || !refs.windowShadow3dCanvas) return;
+
+  const THREE = threeModule;
+  shadowModel3dScene = new THREE.Scene();
+  shadowModel3dScene.background = new THREE.Color(0xefe7da);
+
+  shadowModel3dCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 100);
+  shadowModel3dRenderer = new THREE.WebGLRenderer({
+    canvas: refs.windowShadow3dCanvas,
+    antialias: true,
+    preserveDrawingBuffer: true
+  });
+  shadowModel3dRenderer.shadowMap.enabled = true;
+  shadowModel3dRenderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  const ambient = new THREE.HemisphereLight(0xffffff, 0x9b866d, 1.4);
+  shadowModel3dScene.add(ambient);
+
+  shadowModel3dSunLight = new THREE.DirectionalLight(0xffffff, 5.2);
+  shadowModel3dSunLight.castShadow = true;
+  shadowModel3dSunLight.shadow.mapSize.set(2048, 2048);
+  shadowModel3dScene.add(shadowModel3dSunLight);
+  shadowModel3dScene.add(shadowModel3dSunLight.target);
+
+  shadowModel3dGroup = new THREE.Group();
+  shadowModel3dScene.add(shadowModel3dGroup);
+}
+
+function addWindowShadowReceiver(state) {
+  if (!shadowModel3dGroup) return;
+
+  const THREE = threeModule;
+  const material = new THREE.ShadowMaterial({
+    color: 0x7a1813,
+    opacity: 0.56,
+    transparent: true,
+    depthWrite: false
+  });
+  const receiver = new THREE.Mesh(
+    new THREE.PlaneGeometry(state.janela.largura, state.janela.altura),
+    material
+  );
+  receiver.position.set(0, 0, 0.014);
+  receiver.receiveShadow = true;
+  shadowModel3dGroup.add(receiver);
+}
+
+function resizeWindowShadow3dRenderer(sizeOverride = null) {
+  if (!shadowModel3dRenderer || !shadowModel3dCamera) return;
+
+  const rect = refs.windowShadow3dCanvas.parentElement.getBoundingClientRect();
+  const width = Math.max(1, Math.floor(sizeOverride ? sizeOverride.width : rect.width));
+  const height = Math.max(1, Math.floor(sizeOverride ? sizeOverride.height : rect.height));
+  const aspect = width / height;
+  const viewSize = shadowModel3dBaseDistance * 1.18;
+  const halfHeight = viewSize / 2;
+  const halfWidth = halfHeight * aspect;
+  const cameraDistance = Math.max(viewSize * 2.8, 4);
+
+  shadowModel3dRenderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  shadowModel3dRenderer.setSize(width, height, false);
+  shadowModel3dCamera.left = -halfWidth;
+  shadowModel3dCamera.right = halfWidth;
+  shadowModel3dCamera.top = halfHeight;
+  shadowModel3dCamera.bottom = -halfHeight;
+  shadowModel3dCamera.near = Math.max(0.01, cameraDistance / 120);
+  shadowModel3dCamera.far = cameraDistance * 12;
+  shadowModel3dCamera.up.set(0, 1, 0);
+  shadowModel3dCamera.position.set(0, 0, cameraDistance);
+  shadowModel3dCamera.lookAt(0, 0, 0);
+  shadowModel3dCamera.updateProjectionMatrix();
+}
+
+function updateWindowShadow3dSun(solar) {
+  if (!shadowModel3dSunLight) return;
+
+  const cameraSize = Math.max(shadowModel3dBaseDistance * 1.35, 2.5);
+  shadowModel3dSunLight.shadow.camera.left = -cameraSize;
+  shadowModel3dSunLight.shadow.camera.right = cameraSize;
+  shadowModel3dSunLight.shadow.camera.top = cameraSize;
+  shadowModel3dSunLight.shadow.camera.bottom = -cameraSize;
+  shadowModel3dSunLight.shadow.camera.near = 0.01;
+  shadowModel3dSunLight.shadow.camera.far = Math.max(cameraSize * 8, 12);
+
+  if (!solar.direct || !solar.sun) {
+    shadowModel3dSunLight.intensity = 0;
+    shadowModel3dSunLight.castShadow = false;
+    shadowModel3dSunLight.position.set(0, 3, 4);
+    shadowModel3dSunLight.target.position.set(0, 0, 0);
+    shadowModel3dSunLight.target.updateMatrixWorld();
+    shadowModel3dSunLight.shadow.camera.updateProjectionMatrix();
+    if (shadowModel3dRenderer) shadowModel3dRenderer.shadowMap.needsUpdate = true;
+    return;
+  }
+
+  const THREE = threeModule;
+  const source = new THREE.Vector3(solar.sun.sy, solar.sun.sz, solar.sun.sx).normalize();
+  const distance = Math.max(shadowModel3dBaseDistance * 3.2, 6);
+  shadowModel3dSunLight.intensity = 5.2;
+  shadowModel3dSunLight.castShadow = true;
+  shadowModel3dSunLight.position.copy(source.multiplyScalar(distance));
+  shadowModel3dSunLight.target.position.set(0, 0, 0);
+  shadowModel3dSunLight.target.updateMatrixWorld();
+  shadowModel3dSunLight.shadow.camera.updateProjectionMatrix();
+  if (shadowModel3dRenderer) shadowModel3dRenderer.shadowMap.needsUpdate = true;
+}
+
+async function renderWindowShadow3d(state, solar = getShadowSun(state)) {
+  if (!refs.windowShadowModal.classList.contains("open")) return;
+  const renderToken = ++shadowModel3dRenderToken;
+
+  try {
+    await loadThreeModule();
+    if (renderToken !== shadowModel3dRenderToken) return;
+    initWindowShadow3dScene();
+    const metrics = rebuildModel3d(state, shadowModel3dGroup, {
+      includeGrid: false,
+      updateBaseDistance: false
+    });
+    if (renderToken !== shadowModel3dRenderToken) return;
+    shadowModel3dBaseDistance = Math.max(metrics ? metrics.modelSpan : 3, 2.2);
+    if (solar.direct) addWindowShadowReceiver(state);
+    if (shadowModel3dGroup) shadowModel3dGroup.rotation.set(0, 0, 0);
+    updateWindowShadow3dSun(solar);
+    resizeWindowShadow3dRenderer();
+    shadowModel3dRenderer.render(shadowModel3dScene, shadowModel3dCamera);
+  } catch (error) {
+    console.error(error);
+    refs.windowShadowStatus.textContent = "Não foi possível carregar a vista 3D da sombra.";
+  }
+}
+
+function getReportSeasonalShadowMoments() {
+  return [
+    { label: "Solstício de verão", dateLabel: "21 dez", day: 355 },
+    { label: "Equinócio de outono", dateLabel: "20 mar", day: 79 },
+    { label: "Solstício de inverno", dateLabel: "21 jun", day: 172 },
+    { label: "Equinócio de primavera", dateLabel: "22 set", day: 265 }
+  ].map((season) => ({
+    ...season,
+    views: [9, 12, 15].map((hour) => ({
+      hour,
+      timeLabel: formatSolarTime(hour)
+    }))
+  }));
+}
+
+async function captureWindowShadow3dReportImage(state, solar, size = { width: 420, height: 280 }) {
+  await loadThreeModule();
+  initWindowShadow3dScene();
+  const metrics = rebuildModel3d(state, shadowModel3dGroup, {
+    includeGrid: false,
+    updateBaseDistance: false
+  });
+  shadowModel3dBaseDistance = Math.max(metrics ? metrics.modelSpan : 3, 2.2);
+  if (solar.direct) addWindowShadowReceiver(state);
+  if (shadowModel3dGroup) shadowModel3dGroup.rotation.set(0, 0, 0);
+  updateWindowShadow3dSun(solar);
+  resizeWindowShadow3dRenderer(size);
+  shadowModel3dRenderer.render(shadowModel3dScene, shadowModel3dCamera);
+  await nextFrame();
+  return getCanvasDataUrl(refs.windowShadow3dCanvas, "A vista frontal 3D");
+}
+
+async function captureSeasonalShadowReportViews(state) {
+  const seasons = getReportSeasonalShadowMoments();
+
+  for (const season of seasons) {
+    for (const view of season.views) {
+      const solar = getShadowSunForMoment(state, season.day, view.hour);
+      const ratio = solar.direct ? getWindowShadeRatioForSun(solar.sun, state, 43, 43) : 0;
+      view.direct = solar.direct;
+      view.reason = solar.reason;
+      view.percent = ratio * 100;
+      view.image = await captureWindowShadow3dReportImage(state, solar);
+    }
+  }
+
+  if (refs.windowShadowModal.classList.contains("open")) {
+    renderWindowShadow(state);
+  }
+
+  return seasons;
 }
 
 function getSafeFilePart(value) {
@@ -1866,14 +2214,10 @@ function drawExportSummary(context, parentRect) {
   });
 }
 
-function downloadSolarChartImage() {
-  render();
-
-  const state = getState();
+function createSolarChartExportCanvas(scale = 2) {
   const cardRect = refs.chartCard.getBoundingClientRect();
   const width = Math.ceil(cardRect.width);
   const height = Math.ceil(cardRect.height);
-  const scale = 2;
   const exportCanvas = document.createElement("canvas");
   const exportCtx = exportCanvas.getContext("2d");
 
@@ -1887,12 +2231,495 @@ function downloadSolarChartImage() {
   drawExportHeatScale(exportCtx, cardRect);
   drawExportLegend(exportCtx, cardRect);
   drawExportSummary(exportCtx, cardRect);
+  return exportCanvas;
+}
 
-  exportCanvas.toBlob((blob) => {
-    if (!blob) return;
+function downloadSolarChartImage() {
+  render();
+
+  const state = getState();
+  const exportCanvas = createSolarChartExportCanvas(2);
+
+  getCanvasBlob(exportCanvas, "A carta solar").then((blob) => {
     const today = new Date().toISOString().slice(0, 10);
     downloadBlob(blob, `carta-solar-${getSafeFilePart(state.local.cidade)}-${today}.png`);
-  }, "image/png");
+  }).catch((error) => {
+    alert(error.message || error);
+  });
+}
+
+function loadJsPdfModule() {
+  if (window.jspdf && window.jspdf.jsPDF) {
+    return Promise.resolve(window.jspdf.jsPDF);
+  }
+
+  if (!jsPdfLoadPromise) {
+    jsPdfLoadPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = JSPDF_CDN_URL;
+      script.async = true;
+      script.onload = () => {
+        if (window.jspdf && window.jspdf.jsPDF) {
+          resolve(window.jspdf.jsPDF);
+        } else {
+          reject(new Error("jsPDF carregou, mas não expôs window.jspdf.jsPDF."));
+        }
+      };
+      script.onerror = () => reject(new Error("Falha ao carregar jsPDF via CDN."));
+      document.head.appendChild(script);
+    });
+  }
+
+  return jsPdfLoadPromise;
+}
+
+function getActiveProtectionReportLines(state) {
+  const lines = [];
+  const h = state.briseHorizontal;
+  if (h.ativo) {
+    lines.push(
+      "Brise horizontal",
+      `Lâminas: ${h.numero}`,
+      `Espaçamento vertical: ${h.espacamento.toFixed(2)} m`,
+      `Ângulo: ${h.angulo.toFixed(1)}°`,
+      `Distância da janela: ${h.distancia.toFixed(2)} m`,
+      `Profundidade: ${h.profundidade.toFixed(2)} m`,
+      `Espessura: ${h.espessura.toFixed(2)} m`,
+      `Afastamento do topo: ${h.offsetTopo.toFixed(2)} m`,
+      `Sobreposição lateral: ${h.sobreposicao.toFixed(2)} m`
+    );
+  }
+
+  const left = state.briseVertical.esquerdo;
+  const right = state.briseVertical.direito;
+  if (left.ativo || right.ativo) {
+    lines.push("Brise vertical");
+    if (left.ativo) {
+      lines.push(
+        `Lado esquerdo: projeção ${left.projecao.toFixed(2)} m, espessura ${left.espessura.toFixed(2)} m, afastamento ${left.offset.toFixed(2)} m, sobreposição superior ${left.top.toFixed(2)} m`
+      );
+    }
+    if (right.ativo) {
+      lines.push(
+        `Lado direito: projeção ${right.projecao.toFixed(2)} m, espessura ${right.espessura.toFixed(2)} m, afastamento ${right.offset.toFixed(2)} m, sobreposição superior ${right.top.toFixed(2)} m`
+      );
+    }
+  }
+
+  const mq = state.marquise;
+  if (mq.ativo) {
+    lines.push(
+      "Marquise",
+      `Afastamento do topo: ${mq.offsetTopo.toFixed(2)} m`,
+      `Projeção: ${mq.projecao.toFixed(2)} m`,
+      `Espessura: ${mq.espessura.toFixed(2)} m`,
+      `Sobreposição lateral: ${mq.sobreposicao.toFixed(2)} m`
+    );
+  }
+
+  return lines.length ? lines : ["Nenhuma proteção ativa"];
+}
+
+function addReportText(doc, text, x, y, options = {}) {
+  const size = options.size || 10;
+  const color = options.color || [57, 53, 47];
+  const style = options.style || "normal";
+  doc.setFont("helvetica", style);
+  doc.setFontSize(size);
+  doc.setTextColor(...color);
+  if (options.align) {
+    doc.text(String(text), x, y, { align: options.align });
+  } else {
+    doc.text(String(text), x, y);
+  }
+}
+
+function addReportSectionTitle(doc, title, x, y) {
+  doc.setDrawColor(186, 77, 45);
+  doc.setLineWidth(1.2);
+  doc.line(x, y + 4, x + 34, y + 4);
+  addReportText(doc, title.toUpperCase(), x + 42, y + 7, {
+    size: 9,
+    color: [97, 74, 56],
+    style: "bold"
+  });
+}
+
+function addReportCard(doc, x, y, width, height, fill = [255, 255, 255]) {
+  doc.setFillColor(...fill);
+  doc.setDrawColor(215, 206, 192);
+  doc.setLineWidth(0.8);
+  doc.roundedRect(x, y, width, height, 8, 8, "FD");
+}
+
+function addReportWrappedLines(doc, lines, x, y, maxWidth, lineHeight = 13) {
+  let cursorY = y;
+  lines.forEach((line, index) => {
+    const isHeading = index === 0 || ["Brise horizontal", "Brise vertical", "Marquise"].includes(line);
+    doc.setFont("helvetica", isHeading ? "bold" : "normal");
+    doc.setFontSize(isHeading ? 10.5 : 9.2);
+    doc.setTextColor(isHeading ? 62 : 73, isHeading ? 52 : 67, isHeading ? 43 : 57);
+    const wrapped = doc.splitTextToSize(line, maxWidth);
+    doc.text(wrapped, x, cursorY);
+    cursorY += wrapped.length * lineHeight + (isHeading ? 3 : 0);
+  });
+  return cursorY;
+}
+
+function addOrientationDiagram(doc, state, cx, cy, radius) {
+  doc.setDrawColor(203, 186, 165);
+  doc.setFillColor(255, 255, 255);
+  doc.setLineWidth(0.8);
+  doc.circle(cx, cy, radius, "FD");
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.5);
+  doc.setTextColor(74, 64, 53);
+  doc.text("N", cx, cy - radius - 7, { align: "center" });
+  doc.text("S", cx, cy + radius + 13, { align: "center" });
+  doc.text("O", cx - radius - 10, cy + 3, { align: "center" });
+  doc.text("L", cx + radius + 10, cy + 3, { align: "center" });
+
+  doc.setDrawColor(220, 207, 189);
+  doc.line(cx, cy - radius, cx, cy + radius);
+  doc.line(cx - radius, cy, cx + radius, cy);
+
+  const angle = state.local.orientacao * DEG;
+  const x = cx + Math.sin(angle) * radius * 0.86;
+  const y = cy - Math.cos(angle) * radius * 0.86;
+  doc.setDrawColor(186, 77, 45);
+  doc.setFillColor(186, 77, 45);
+  doc.setLineWidth(2.2);
+  doc.line(cx, cy, x, y);
+  doc.circle(x, y, 3.2, "F");
+  addReportText(doc, `${Math.round(state.local.orientacao)}°`, cx, cy + radius + 28, {
+    size: 9,
+    color: [74, 64, 53],
+    style: "bold",
+    align: "center"
+  });
+}
+
+function addImageFit(doc, imageData, x, y, maxWidth, maxHeight) {
+  const props = doc.getImageProperties(imageData);
+  const ratio = Math.min(maxWidth / props.width, maxHeight / props.height);
+  const width = props.width * ratio;
+  const height = props.height * ratio;
+  const drawX = x + (maxWidth - width) / 2;
+  doc.addImage(imageData, "PNG", drawX, y, width, height, undefined, "FAST");
+  return { x: drawX, y, width, height };
+}
+
+function getCanvasDataUrl(canvas, label) {
+  try {
+    return canvas.toDataURL("image/png");
+  } catch (error) {
+    if (error && error.name === "SecurityError") {
+      throw new Error(`${label} nao pode ser exportado porque o navegador marcou o canvas como inseguro. Recarregue a aplicacao por http://127.0.0.1 ou http://localhost e tente novamente.`);
+    }
+    throw error;
+  }
+}
+
+function getCanvasBlob(canvas, label) {
+  return new Promise((resolve, reject) => {
+    try {
+      canvas.toBlob((blob) => {
+        if (blob) {
+          resolve(blob);
+        } else {
+          reject(new Error(`${label} nao gerou imagem para download.`));
+        }
+      }, "image/png");
+    } catch (error) {
+      if (error && error.name === "SecurityError") {
+        reject(new Error(`${label} nao pode ser exportado porque o navegador marcou o canvas como inseguro. Recarregue a aplicacao por http://127.0.0.1 ou http://localhost e tente novamente.`));
+        return;
+      }
+      reject(error);
+    }
+  });
+}
+
+function addReportHeaderBrand(doc, pageW, margin) {
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(18);
+  const brise = "Brise";
+  const lab = "Lab";
+  const briseWidth = doc.getTextWidth(brise);
+  const labWidth = doc.getTextWidth(lab);
+  const x = pageW - margin - briseWidth - labWidth;
+  const y = 55;
+
+  doc.setTextColor(31, 31, 26);
+  doc.text(brise, x, y);
+  doc.setTextColor(186, 77, 45);
+  doc.text(lab, x + briseWidth, y);
+}
+
+function addReportFooter(doc, pageW, pageH, margin, reportDate) {
+  addReportText(doc, reportDate, margin, pageH - 28, {
+    size: 9,
+    color: [130, 112, 89],
+    style: "bold"
+  });
+  addReportText(doc, "https://briselab.netlify.app", pageW - margin, pageH - 28, {
+    size: 9,
+    color: [130, 112, 89],
+    style: "bold",
+    align: "right"
+  });
+}
+
+function formatReportPercent(value) {
+  return `${value.toFixed(1).replace(".", ",")}%`;
+}
+
+function addSeasonalShadowReportPage(doc, seasonalViews, pageW, pageH, margin, reportDate) {
+  const contentW = pageW - margin * 2;
+  const columnGap = 10;
+  const cellW = (contentW - columnGap * 2) / 3;
+  const cellH = 126;
+  const rowPitch = 164;
+  const startY = 108;
+
+  doc.addPage();
+  doc.setFillColor(255, 255, 255);
+  doc.rect(0, 0, pageW, pageH, "F");
+  addReportHeaderBrand(doc, pageW, margin);
+
+  addReportText(doc, "Vistas frontais de sombreamento", margin, 54, {
+    size: 20,
+    style: "bold",
+    color: [31, 31, 26]
+  });
+  addReportText(doc, "Solstícios e equinócios às 09:00, 12:00 e 15:00", margin, 75, {
+    size: 10,
+    color: [90, 90, 82]
+  });
+
+  seasonalViews.forEach((season, rowIndex) => {
+    const rowY = startY + rowIndex * rowPitch;
+    addReportText(doc, `${season.label} · ${season.dateLabel}`, margin, rowY, {
+      size: 10,
+      color: [97, 74, 56],
+      style: "bold"
+    });
+
+    season.views.forEach((view, columnIndex) => {
+      const x = margin + columnIndex * (cellW + columnGap);
+      const y = rowY + 12;
+      addReportCard(doc, x, y, cellW, cellH);
+      addReportText(doc, view.timeLabel, x + 10, y + 18, {
+        size: 9,
+        color: [62, 52, 43],
+        style: "bold"
+      });
+      addReportText(doc, `Sombra ${formatReportPercent(view.percent)}`, x + cellW - 10, y + 18, {
+        size: 8.5,
+        color: view.direct ? [186, 77, 45] : [130, 112, 89],
+        style: "bold",
+        align: "right"
+      });
+
+      addImageFit(doc, view.image, x + 9, y + 28, cellW - 18, 74);
+      addReportText(doc, view.direct ? "Incidência direta" : "Sem sol direto", x + cellW / 2, y + 113, {
+        size: 7.8,
+        color: [90, 90, 82],
+        align: "center"
+      });
+    });
+  });
+
+  addReportFooter(doc, pageW, pageH, margin, reportDate);
+}
+
+function nextFrame() {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+async function captureModel3dReportImages(state) {
+  await loadThreeModule();
+  initModel3dScene();
+
+  const savedZoom = model3dZoom;
+  const savedRotation = model3dGroup
+    ? { x: model3dGroup.rotation.x, y: model3dGroup.rotation.y, z: model3dGroup.rotation.z }
+    : null;
+
+  renderWindowModel3d(state);
+
+  const capture = async ({ rotationY, cameraView = "perspective" }) => {
+    if (model3dGroup) {
+      model3dGroup.rotation.x = MODEL3D_DEFAULT_ROTATION_X;
+      model3dGroup.rotation.y = rotationY;
+      model3dGroup.rotation.z = 0;
+    }
+    model3dZoom = 1;
+    renderModel3dScene(cameraView);
+    await nextFrame();
+    return getCanvasDataUrl(refs.windowModel3dCanvas, "O modelo 3D");
+  };
+
+  const images = {
+    perspective: await capture({ rotationY: MODEL3D_DEFAULT_ROTATION_Y }),
+    front: await capture({ rotationY: 0, cameraView: "front" }),
+    side: await capture({ rotationY: 0, cameraView: "side" })
+  };
+
+  model3dZoom = savedZoom;
+  if (model3dGroup && savedRotation) {
+    model3dGroup.rotation.set(savedRotation.x, savedRotation.y, savedRotation.z);
+  }
+  renderModel3dScene();
+  return images;
+}
+
+async function downloadSolarReportPdf() {
+  setUiBlocked(true);
+  try {
+    render({ updateMask: true });
+    await nextFrame();
+
+    const state = getState();
+    const jsPDF = await loadJsPdfModule();
+    const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const margin = 38;
+    const contentW = pageW - margin * 2;
+    const generatedAt = new Date();
+    const today = generatedAt.toLocaleDateString("pt-BR");
+    const reportDate = generatedAt.toLocaleDateString("pt-BR", {
+      day: "2-digit",
+      month: "long",
+      year: "numeric"
+    });
+    const chartImage = getCanvasDataUrl(createSolarChartExportCanvas(1.7), "A carta solar");
+    const modelImages = await captureModel3dReportImages(state);
+    const seasonalShadowViews = await captureSeasonalShadowReportViews(state);
+    const directSunStats = estimateBlockedDirectSunHours(state);
+    const activeLines = getActiveProtectionReportLines(state);
+
+    doc.setFillColor(255, 255, 255);
+    doc.rect(0, 0, pageW, pageH, "F");
+    addReportHeaderBrand(doc, pageW, margin);
+
+    addReportText(doc, "Relatório de análise solar", margin, 54, {
+      size: 22,
+      style: "bold",
+      color: [31, 31, 26]
+    });
+    addReportText(doc, `${state.local.cidade} · ${today}`, margin, 76, {
+      size: 10,
+      color: [90, 90, 82]
+    });
+
+    addReportCard(doc, margin, 102, contentW, 132);
+    addReportSectionTitle(doc, "Local e orientação", margin + 18, 124);
+    addReportText(doc, "Cidade", margin + 18, 154, { size: 8.5, color: [90, 90, 82], style: "bold" });
+    addReportText(doc, state.local.cidade, margin + 18, 170, { size: 14, style: "bold" });
+    addReportText(doc, "Latitude", margin + 18, 196, { size: 8.5, color: [90, 90, 82], style: "bold" });
+    addReportText(doc, `${state.local.latitude.toFixed(2)}°`, margin + 18, 212, { size: 12, style: "bold" });
+    addOrientationDiagram(doc, state, margin + contentW - 82, 168, 40);
+
+    addReportCard(doc, margin, 252, contentW, 95);
+    addReportSectionTitle(doc, "Janela", margin + 18, 274);
+    addReportText(doc, `${state.janela.largura.toFixed(2)} m × ${state.janela.altura.toFixed(2)} m`, margin + 18, 308, {
+      size: 18,
+      style: "bold",
+      color: [47, 92, 104]
+    });
+    addReportText(doc, "Largura × altura", margin + 18, 328, { size: 9, color: [90, 90, 82] });
+
+    addReportCard(doc, margin, 365, contentW, 260);
+    addReportSectionTitle(doc, "Modelo 3D", margin + 18, 387);
+    const modelImageY = 409;
+    const perspectiveW = 300;
+    const sideColumnX = margin + 18 + perspectiveW + 18;
+    const sideColumnW = contentW - 36 - perspectiveW - 18;
+    const perspectiveImage = addImageFit(doc, modelImages.perspective, margin + 18, modelImageY, perspectiveW, 176);
+    addReportText(doc, "Perspectiva", perspectiveImage.x + perspectiveImage.width / 2, perspectiveImage.y + perspectiveImage.height + 13, {
+      size: 8.5,
+      color: [90, 90, 82],
+      style: "bold",
+      align: "center"
+    });
+    const frontImage = addImageFit(doc, modelImages.front, sideColumnX, modelImageY, sideColumnW, 78);
+    addReportText(doc, "Vista frontal", frontImage.x + frontImage.width / 2, frontImage.y + frontImage.height + 11, {
+      size: 8.5,
+      color: [90, 90, 82],
+      style: "bold",
+      align: "center"
+    });
+    const sideImage = addImageFit(doc, modelImages.side, sideColumnX, modelImageY + 105, sideColumnW, 78);
+    addReportText(doc, "Vista lateral", sideImage.x + sideImage.width / 2, sideImage.y + sideImage.height + 11, {
+      size: 8.5,
+      color: [90, 90, 82],
+      style: "bold",
+      align: "center"
+    });
+
+    addReportCard(doc, margin, 643, contentW, 142);
+    addReportSectionTitle(doc, "Proteções ativas", margin + 18, 665);
+    addReportWrappedLines(doc, activeLines, margin + 18, 695, contentW - 36, 11.5);
+    addReportFooter(doc, pageW, pageH, margin, reportDate);
+
+    doc.addPage();
+    doc.setFillColor(255, 255, 255);
+    doc.rect(0, 0, pageW, pageH, "F");
+    addReportHeaderBrand(doc, pageW, margin);
+    addReportText(doc, "Carta solar e desempenho", margin, 54, {
+      size: 20,
+      style: "bold",
+      color: [31, 31, 26]
+    });
+    addReportText(doc, "Mapa de calor da área sombreada na janela", margin, 75, {
+      size: 10,
+      color: [90, 90, 82]
+    });
+
+    addReportCard(doc, margin, 96, contentW, 486);
+    addImageFit(doc, chartImage, margin + 16, 116, contentW - 32, 446);
+
+    addReportCard(doc, margin, 604, contentW, 138);
+    addReportSectionTitle(doc, "Dados da carta solar", margin + 18, 626);
+    addReportText(doc, "Sombreamento médio da janela no mapa", margin + 18, 660, {
+      size: 9,
+      color: [90, 90, 82],
+      style: "bold"
+    });
+    addReportText(doc, `${(lastMaskStats.ratio * 100).toFixed(1)}%`, margin + 18, 684, {
+      size: 22,
+      color: [186, 77, 45],
+      style: "bold"
+    });
+    addReportText(doc, "Horas equivalentes de área sombreada", margin + 250, 660, {
+      size: 9,
+      color: [90, 90, 82],
+      style: "bold"
+    });
+    addReportText(doc, `${directSunStats.percent}%`, margin + 250, 684, {
+      size: 22,
+      color: [47, 92, 104],
+      style: "bold"
+    });
+    addReportText(doc, `${directSunStats.blockedHours} h-eq de ${directSunStats.directHours} h/ano estimadas`, margin + 250, 706, {
+      size: 9,
+      color: [73, 67, 57]
+    });
+
+    addReportFooter(doc, pageW, pageH, margin, reportDate);
+    addSeasonalShadowReportPage(doc, seasonalShadowViews, pageW, pageH, margin, reportDate);
+
+    const filename = `relatorio-solar-${getSafeFilePart(state.local.cidade)}-${new Date().toISOString().slice(0, 10)}.pdf`;
+    doc.save(filename);
+  } catch (error) {
+    console.error(error);
+    alert(`Não foi possível gerar o relatório em PDF.\n\nDetalhe: ${error.message || error}`);
+  } finally {
+    setUiBlocked(false);
+  }
 }
 
 function resizeCanvasForDpr() {
@@ -1908,11 +2735,8 @@ function resizeCanvasForDpr() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
-function render({ updateMask = true } = {}) {
+function drawSolarChart(state, { updateMask = true } = {}) {
   resizeCanvasForDpr();
-  updateBriseSpacingDisplay();
-  const state = getState();
-
   const width = refs.canvas.width / (window.devicePixelRatio || 1);
   const height = refs.canvas.height / (window.devicePixelRatio || 1);
   const center = { x: width / 2, y: height / 2 };
@@ -1935,16 +2759,57 @@ function render({ updateMask = true } = {}) {
   drawSolarMonthLabels(state, center, radius);
   drawFacadePlaneLine(state, center, radius);
   drawFacadeDirection(state, center, radius);
+  return stats;
+}
+
+function renderOrientationPreview() {
+  const state = getState();
+  updateChartHeader(state);
+  drawSolarChart(state, { updateMask: false });
+}
+
+function scheduleOrientationPreview() {
+  if (orientationRenderFrame) return;
+  orientationRenderFrame = requestAnimationFrame(() => {
+    orientationRenderFrame = 0;
+    renderOrientationPreview();
+  });
+}
+
+function renderOrientationFinal() {
+  if (orientationRenderFrame) {
+    cancelAnimationFrame(orientationRenderFrame);
+    orientationRenderFrame = 0;
+  }
+  const state = getState();
+  const stats = drawSolarChart(state, { updateMask: false });
+  updateSummary(state, stats);
+  renderWindowShadow(state);
+}
+
+function render({ updateMask = true } = {}) {
+  updateBriseSpacingDisplay();
+  const state = getState();
+  const stats = drawSolarChart(state, { updateMask });
   updateSummary(state, stats);
   renderWindowShadow(state);
   renderWindowModel3d(state);
+}
+
+function refreshLayoutSurfaces() {
+  updateBriseSpacingDisplay();
+  const state = getState();
+  updateChartHeader(state);
+  drawSolarChart(state, { updateMask: false });
+  renderWindowShadow(state);
+  renderModel3dScene();
 }
 
 function scheduleRender() {
   if (renderFrame) cancelAnimationFrame(renderFrame);
   renderFrame = requestAnimationFrame(() => {
     renderFrame = 0;
-    render();
+    refreshLayoutSurfaces();
   });
 }
 
@@ -1993,8 +2858,14 @@ function bindInputs() {
   const inputs = document.querySelectorAll("input");
   inputs.forEach((input) => {
     input.addEventListener("input", () => {
+      if (input === refs.shadowDate || input === refs.shadowTime) {
+        renderWindowShadow();
+        saveAppConfig();
+        return;
+      }
+
       if (input === refs.orientacao) {
-        render({ updateMask: false });
+        scheduleOrientationPreview();
         saveAppConfig();
         return;
       }
@@ -2004,8 +2875,14 @@ function bindInputs() {
       saveAppConfig();
     });
     input.addEventListener("change", () => {
+      if (input === refs.shadowDate || input === refs.shadowTime) {
+        renderWindowShadow();
+        saveAppConfig();
+        return;
+      }
+
       if (input === refs.orientacao) {
-        render({ updateMask: false });
+        renderOrientationFinal();
         saveAppConfig();
         return;
       }
@@ -2049,7 +2926,10 @@ function bindInputs() {
 
   window.addEventListener("resize", scheduleRender);
 
+  refs.canvas.addEventListener("mousemove", updateShadowPointTooltip);
+  refs.canvas.addEventListener("mouseleave", hideShadowPointTooltip);
   refs.downloadSolarChart.addEventListener("click", downloadSolarChartImage);
+  refs.downloadSolarReport.addEventListener("click", downloadSolarReportPdf);
   refs.updateMaskButton.addEventListener("click", updateMaskFromUserAction);
   refs.resetModel3dView.addEventListener("click", resetModel3dView);
   refs.resetModel3dViewModal.addEventListener("click", resetModel3dView);
@@ -2062,6 +2942,16 @@ function bindInputs() {
   refs.closeWindowShadow.addEventListener("click", closeWindowShadowModal);
   refs.windowShadowModal.addEventListener("click", (event) => {
     if (event.target === refs.windowShadowModal) closeWindowShadowModal();
+  });
+  document.querySelectorAll("[data-shadow-step]").forEach((button) => {
+    button.addEventListener("click", () => {
+      shiftShadowControl(button.dataset.shadowStep, button.dataset.delta);
+    });
+  });
+  document.querySelectorAll("[data-shadow-date]").forEach((button) => {
+    button.addEventListener("click", () => {
+      jumpToShadowDate(button.dataset.shadowDate);
+    });
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && refs.windowShadowModal.classList.contains("open")) {
@@ -2085,6 +2975,7 @@ function initLayoutObservers() {
     observer.observe(refs.chartCard);
     observer.observe(refs.windowModel3dSlot);
     observer.observe(refs.model3dModalSlot);
+    observer.observe(refs.windowShadow3dCanvas.parentElement);
   }
 
   window.addEventListener("load", scheduleRender);

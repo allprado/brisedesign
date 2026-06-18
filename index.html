@@ -102,7 +102,7 @@
               <input id="janela-altura" type="number" min="0.1" step="0.01" value="1.50" />
             </label>
           </div>
-          <button class="action-button" id="open-window-shadow" type="button">Vista frontal da janela</button>
+          <button class="action-button" id="open-window-shadow" type="button">Vista frontal 3D</button>
         </section>
 
         <section class="card">
@@ -117,14 +117,14 @@
             <h3>Lâminas horizontais (louvres)</h3>
             <label class="checkbox-row"><input id="bh-ativo" type="checkbox" checked /> Ativar brise horizontal</label>
             <div class="grid two compact">
-              <label>Número de lâminas<input id="bh-numero" type="number" min="2" step="1" value="10" /></label>
-              <label>Espaçamento vertical (m)<span id="bh-espacamento-display" class="display-value">0.17</span></label>
+              <label>Número de lâminas<input id="bh-numero" type="number" min="2" step="1" value="5" /></label>
+              <label>Espaçamento vertical (m)<span id="bh-espacamento-display" class="display-value">0.38</span></label>
               <label>Ângulo da lâmina (°)<input id="bh-angulo" type="number" step="0.1" value="0" /></label>
-              <label>Distância da janela (m)<input id="bh-distancia" type="number" min="0" step="0.01" value="0.50" /></label>
-              <label>Profundidade da lâmina (m)<input id="bh-profundidade" type="number" min="0" step="0.01" value="0.50" /></label>
+              <label>Distância da janela (m)<input id="bh-distancia" type="number" min="0" step="0.01" value="0" /></label>
+              <label>Profundidade da lâmina (m)<input id="bh-profundidade" type="number" min="0" step="0.01" value="0.20" /></label>
               <label>Espessura da lâmina (m)<input id="bh-espessura" type="number" min="0" step="0.01" value="0.04" /></label>
               <label>Afastamento vertical do topo da janela (m)<input id="bh-offset-topo" type="number" min="0" step="0.01" value="0.00" /></label>
-              <label>Sobreposição lateral na janela (m)<input id="bh-sobreposicao" type="number" min="0" step="0.01" value="0.00" /></label>
+              <label>Sobreposição lateral na janela (m)<input id="bh-sobreposicao" type="number" min="0" step="0.01" value="0.25" /></label>
             </div>
             <div class="illustration">
               <img src="assets/horizontal.png" alt="Ilustração do brise horizontal" />
@@ -192,7 +192,7 @@
             <div class="grid two">
               <div class="groupbox">
                 <h4>Lado esquerdo</h4>
-                <label class="checkbox-row"><input id="bv-esq-ativo" type="checkbox" checked /> Ativar lado esquerdo</label>
+                <label class="checkbox-row"><input id="bv-esq-ativo" type="checkbox" /> Ativar lado esquerdo</label>
                 <label>Projeção (m)<input id="bv-esq-projecao" type="number" min="0" step="0.01" value="0.50" /></label>
                 <label>Espessura da aleta (m)<input id="bv-esq-espessura" type="number" min="0" step="0.01" value="0.05" /></label>
                 <label>Afastamento horizontal da borda esquerda (m)<input id="bv-esq-offset" type="number" min="0" step="0.01" value="0.00" /></label>
@@ -200,7 +200,7 @@
               </div>
               <div class="groupbox">
                 <h4>Lado direito</h4>
-                <label class="checkbox-row"><input id="bv-dir-ativo" type="checkbox" checked /> Ativar lado direito</label>
+                <label class="checkbox-row"><input id="bv-dir-ativo" type="checkbox" /> Ativar lado direito</label>
                 <label>Projeção (m)<input id="bv-dir-projecao" type="number" min="0" step="0.01" value="0.50" /></label>
                 <label>Espessura da aleta (m)<input id="bv-dir-espessura" type="number" min="0" step="0.01" value="0.05" /></label>
                 <label>Afastamento horizontal da borda direita (m)<input id="bv-dir-offset" type="number" min="0" step="0.01" value="0.00" /></label>
@@ -257,7 +257,7 @@
 
           <div class="tab-panel" id="tab-marquise" role="tabpanel">
             <h3>Marquise (sobrejanela)</h3>
-            <label class="checkbox-row"><input id="mq-ativo" type="checkbox" checked /> Ativar marquise</label>
+            <label class="checkbox-row"><input id="mq-ativo" type="checkbox" /> Ativar marquise</label>
             <div class="grid two compact">
               <label>Afastamento vertical do topo da janela (m)<input id="mq-offset-topo" type="number" min="0" step="0.01" value="0.00" /></label>
               <label>Projeção (m)<input id="mq-projecao" type="number" min="0" step="0.01" value="0.50" /></label>
@@ -315,7 +315,6 @@
             <div class="model-3d-head">
               <h3>Modelo 3D da janela + brises</h3>
               <div class="model-3d-actions">
-                <span id="window-model-3d-status">Carregando modelo 3D...</span>
                 <button class="model-icon-button" id="reset-model-3d-view" type="button" aria-label="Restaurar vista" title="Restaurar vista" data-tooltip="Restaurar vista">
                   <svg viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M3 12a9 9 0 1 0 3-6.7" />
@@ -338,6 +337,7 @@
             </div>
             <div class="model-3d-slot" id="window-model-3d-slot">
               <canvas id="window-model-3d-canvas" aria-label="Modelo 3D da janela e dos brises"></canvas>
+              <span class="model-3d-status-overlay" id="window-model-3d-status">Carregando modelo 3D...</span>
             </div>
           </div>
         </section>
@@ -350,11 +350,15 @@
               <h2>Carta solar estereográfica</h2>
               <p><strong>Cidade:</strong> <span id="cidade-display">São Paulo</span> | <strong>Latitude:</strong> <span id="lat-display">-23.55°</span></p>
             </div>
-            <button class="export-button" id="download-solar-chart" type="button" data-export-ignore>Baixar imagem</button>
+            <div class="chart-actions" data-export-ignore>
+              <button class="export-button" id="download-solar-chart" type="button">Baixar imagem</button>
+              <button class="export-button" id="download-solar-report" type="button">Baixar relatório</button>
+            </div>
           </div>
           <div class="chart-canvas-row">
             <div class="chart-canvas-slot">
               <canvas id="solar-canvas" width="860" height="860" aria-label="Carta solar"></canvas>
+              <div class="shadow-point-tooltip" id="shadow-point-tooltip" aria-hidden="true"></div>
               <div class="mask-update-overlay" id="mask-update-overlay" aria-hidden="true" data-export-ignore>
                 <div>
                   <strong>Máscara desatualizada</strong>
@@ -394,7 +398,7 @@
     <section class="modal" role="dialog" aria-modal="true" aria-labelledby="window-shadow-title">
       <header class="modal-head">
         <div>
-          <h2 id="window-shadow-title">Vista frontal da janela</h2>
+          <h2 id="window-shadow-title">Vista frontal do modelo 3D</h2>
           <p id="window-shadow-status">Ajuste data e horário para ver a sombra.</p>
         </div>
         <button class="icon-button" id="close-window-shadow" type="button" aria-label="Fechar">X</button>
@@ -402,23 +406,39 @@
 
       <div class="window-shadow-layout">
         <div class="window-preview-slot">
-          <canvas id="window-shadow-canvas" width="760" height="520" aria-label="Sombra projetada na janela"></canvas>
+          <canvas id="window-shadow-3d-canvas" width="760" height="520" aria-label="Vista frontal 3D da sombra projetada no modelo"></canvas>
+          <canvas id="window-shadow-canvas" width="760" height="520" hidden aria-hidden="true"></canvas>
         </div>
 
         <div class="shadow-controls">
-          <label>
-            Data
-            <input id="shadow-date" type="range" min="1" max="365" step="1" value="172" />
-            <span class="control-readout" id="shadow-date-text">21 Jun</span>
-          </label>
-          <label>
-            Horário solar
-            <input id="shadow-time" type="range" min="5" max="19" step="0.25" value="12" />
-            <span class="control-readout" id="shadow-time-text">12:00</span>
-          </label>
-          <label class="checkbox-row">
-            <input id="show-brises-overlay" type="checkbox" checked /> Mostrar brises
-          </label>
+          <div class="shadow-control">
+            <div class="shadow-control-head">
+              <span>Data</span>
+              <span class="control-readout" id="shadow-date-text">21 Jun</span>
+            </div>
+            <div class="slider-stepper">
+              <button class="step-button" type="button" data-shadow-step="date" data-delta="-1" aria-label="Diminuir 1 dia">−</button>
+              <input id="shadow-date" type="range" min="1" max="365" step="1" value="172" />
+              <button class="step-button" type="button" data-shadow-step="date" data-delta="1" aria-label="Aumentar 1 dia">+</button>
+            </div>
+          </div>
+          <div class="shadow-control">
+            <div class="shadow-control-head">
+              <span>Horário solar</span>
+              <span class="control-readout" id="shadow-time-text">12:00</span>
+            </div>
+            <div class="slider-stepper">
+              <button class="step-button" type="button" data-shadow-step="time" data-delta="-0.25" aria-label="Diminuir 15 minutos">−</button>
+              <input id="shadow-time" type="range" min="5" max="19" step="0.25" value="12" />
+              <button class="step-button" type="button" data-shadow-step="time" data-delta="0.25" aria-label="Aumentar 15 minutos">+</button>
+            </div>
+          </div>
+          <div class="season-shortcuts" aria-label="Atalhos de datas sazonais no hemisfério sul">
+            <button class="season-button" type="button" data-shadow-date="355" title="Solstício de verão: 21 de dezembro">Solst. verão</button>
+            <button class="season-button" type="button" data-shadow-date="79" title="Equinócio de outono: 20 de março">Eq. outono</button>
+            <button class="season-button" type="button" data-shadow-date="172" title="Solstício de inverno: 21 de junho">Solst. inverno</button>
+            <button class="season-button" type="button" data-shadow-date="265" title="Equinócio de primavera: 22 de setembro">Eq. primavera</button>
+          </div>
         </div>
       </div>
     </section>
