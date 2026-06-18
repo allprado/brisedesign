@@ -43,8 +43,13 @@ const refs = {
   maskUpdateOverlay: document.getElementById("mask-update-overlay"),
   updateMaskButton: document.getElementById("update-mask-button"),
   chartCard: document.querySelector(".chart-card"),
+  chartActionsButton: document.getElementById("chart-actions-button"),
+  chartActionsMenu: document.getElementById("chart-actions-menu"),
   downloadSolarChart: document.getElementById("download-solar-chart"),
   downloadSolarReport: document.getElementById("download-solar-report"),
+  saveProject: document.getElementById("save-project"),
+  loadProject: document.getElementById("load-project"),
+  projectFileInput: document.getElementById("project-file-input"),
   splashScreen: document.getElementById("splash-screen"),
   uiBlocker: document.getElementById("ui-blocker"),
 
@@ -77,6 +82,7 @@ const MIN_HEATMAP_FRONT_COMPONENT = Math.cos(89.5 * DEG);
 let renderFrame = 0;
 let didRestoreConfig = false;
 const STORAGE_KEY = "briselab:lastConfig";
+const PROJECT_FILE_VERSION = 1;
 const THREE_CDN_URL = "https://unpkg.com/three@0.165.0/build/three.module.js";
 const JSPDF_CDN_URL = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 const MODEL3D_DEFAULT_ROTATION_X = 0;
@@ -195,6 +201,7 @@ function getPersistableConfig() {
   const fields = {};
   document.querySelectorAll("input, select").forEach((field) => {
     if (!field.id) return;
+    if (field.type === "file") return;
     fields[field.id] = field.type === "checkbox" ? field.checked : field.value;
   });
 
@@ -211,6 +218,12 @@ function saveAppConfig() {
   } catch (error) {
     // localStorage can be unavailable in restricted browsing contexts.
   }
+}
+
+function syncLocalFieldLocks() {
+  const selected = refs.capitalSelector.value;
+  refs.cidade.disabled = selected !== "custom";
+  refs.latitude.disabled = selected !== "custom";
 }
 
 function restoreActiveTab(tabId) {
@@ -231,6 +244,22 @@ function restoreActiveTab(tabId) {
   });
 }
 
+function applyPersistableConfig(config) {
+  Object.entries(config.fields || {}).forEach(([id, value]) => {
+    const field = document.getElementById(id);
+    if (!field) return;
+
+    if (field.type === "checkbox") {
+      field.checked = Boolean(value);
+    } else {
+      field.value = value;
+    }
+  });
+
+  restoreActiveTab(config.activeTab);
+  syncLocalFieldLocks();
+}
+
 function restoreAppConfig() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -238,18 +267,7 @@ function restoreAppConfig() {
 
     const config = JSON.parse(raw);
     didRestoreConfig = true;
-    Object.entries(config.fields || {}).forEach(([id, value]) => {
-      const field = document.getElementById(id);
-      if (!field) return;
-
-      if (field.type === "checkbox") {
-        field.checked = Boolean(value);
-      } else {
-        field.value = value;
-      }
-    });
-
-    restoreActiveTab(config.activeTab);
+    applyPersistableConfig(config);
   } catch (error) {
     try {
       localStorage.removeItem(STORAGE_KEY);
@@ -2044,6 +2062,74 @@ function downloadBlob(blob, filename) {
   URL.revokeObjectURL(url);
 }
 
+function getProjectPayload() {
+  return {
+    app: "BriseLab",
+    type: "briselab-project",
+    version: PROJECT_FILE_VERSION,
+    savedAt: new Date().toISOString(),
+    config: getPersistableConfig()
+  };
+}
+
+function downloadProjectFile() {
+  closeChartActionsMenu();
+  const state = getState();
+  const today = new Date().toISOString().slice(0, 10);
+  const payload = JSON.stringify(getProjectPayload(), null, 2);
+  const blob = new Blob([payload], { type: "application/json" });
+  downloadBlob(blob, `projeto-briselab-${getSafeFilePart(state.local.cidade)}-${today}.json`);
+}
+
+function loadProjectFromFile(file) {
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const payload = JSON.parse(String(reader.result || "{}"));
+      const config = payload.config || payload;
+      if (!config || !config.fields) {
+        throw new Error("Arquivo de projeto inválido.");
+      }
+
+      applyPersistableConfig(config);
+      saveAppConfig();
+      render({ updateMask: true });
+    } catch (error) {
+      alert(`Não foi possível carregar o projeto.\n\nDetalhe: ${error.message || error}`);
+    } finally {
+      refs.projectFileInput.value = "";
+    }
+  };
+  reader.onerror = () => {
+    alert("Não foi possível ler o arquivo de projeto.");
+    refs.projectFileInput.value = "";
+  };
+  reader.readAsText(file);
+}
+
+function openProjectFilePicker() {
+  closeChartActionsMenu();
+  refs.projectFileInput.click();
+}
+
+function setChartActionsMenu(open) {
+  const menuRoot = refs.chartActionsButton.closest(".action-menu");
+  menuRoot.classList.toggle("open", open);
+  refs.chartActionsButton.setAttribute("aria-expanded", open ? "true" : "false");
+  refs.chartActionsMenu.setAttribute("aria-hidden", open ? "false" : "true");
+}
+
+function toggleChartActionsMenu() {
+  const menuRoot = refs.chartActionsButton.closest(".action-menu");
+  setChartActionsMenu(!menuRoot.classList.contains("open"));
+}
+
+function closeChartActionsMenu() {
+  setChartActionsMenu(false);
+}
+
 function getRelativeRect(element, parentRect) {
   const rect = element.getBoundingClientRect();
   return {
@@ -2441,20 +2527,53 @@ function getCanvasBlob(canvas, label) {
   });
 }
 
-function addReportHeaderBrand(doc, pageW, margin) {
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(18);
-  const brise = "Brise";
-  const lab = "Lab";
-  const briseWidth = doc.getTextWidth(brise);
-  const labWidth = doc.getTextWidth(lab);
-  const x = pageW - margin - briseWidth - labWidth;
-  const y = 55;
+async function waitForReportBrandFont() {
+  if (!document.fonts) return;
 
-  doc.setTextColor(31, 31, 26);
-  doc.text(brise, x, y);
-  doc.setTextColor(186, 77, 45);
-  doc.text(lab, x + briseWidth, y);
+  try {
+    if (document.fonts.load) {
+      await Promise.race([
+        document.fonts.load('700 34px "Sora"'),
+        new Promise((resolve) => window.setTimeout(resolve, 700))
+      ]);
+    }
+    if (document.fonts.ready) {
+      await Promise.race([
+        document.fonts.ready,
+        new Promise((resolve) => window.setTimeout(resolve, 700))
+      ]);
+    }
+  } catch (error) {
+    // Font loading can fail offline; the canvas will fall back to the app's sans-serif stack.
+  }
+}
+
+function createReportBrandImage() {
+  const scale = 3;
+  const canvas = document.createElement("canvas");
+  const width = 178;
+  const height = 50;
+  canvas.width = width * scale;
+  canvas.height = height * scale;
+  const context = canvas.getContext("2d");
+  context.scale(scale, scale);
+  context.clearRect(0, 0, width, height);
+  context.font = '700 34px "Sora", "Segoe UI", sans-serif';
+  context.textBaseline = "alphabetic";
+
+  const x = 2;
+  const y = 37;
+  const brise = "Brise";
+  context.fillStyle = "#1f1f1a";
+  context.fillText(brise, x, y);
+  context.fillStyle = "#ba4d2d";
+  context.fillText("Lab", x + context.measureText(brise).width, y);
+
+  return getCanvasDataUrl(canvas, "A marca BriseLab");
+}
+
+function addReportHeaderBrand(doc, pageW, margin, brandImage) {
+  doc.addImage(brandImage, "PNG", pageW - margin - 108, 30, 108, 30, undefined, "FAST");
 }
 
 function addReportFooter(doc, pageW, pageH, margin, reportDate) {
@@ -2475,7 +2594,7 @@ function formatReportPercent(value) {
   return `${value.toFixed(1).replace(".", ",")}%`;
 }
 
-function addSeasonalShadowReportPage(doc, seasonalViews, pageW, pageH, margin, reportDate) {
+function addSeasonalShadowReportPage(doc, seasonalViews, pageW, pageH, margin, reportDate, brandImage) {
   const contentW = pageW - margin * 2;
   const columnGap = 10;
   const cellW = (contentW - columnGap * 2) / 3;
@@ -2486,7 +2605,7 @@ function addSeasonalShadowReportPage(doc, seasonalViews, pageW, pageH, margin, r
   doc.addPage();
   doc.setFillColor(255, 255, 255);
   doc.rect(0, 0, pageW, pageH, "F");
-  addReportHeaderBrand(doc, pageW, margin);
+  addReportHeaderBrand(doc, pageW, margin, brandImage);
 
   addReportText(doc, "Vistas frontais de sombreamento", margin, 54, {
     size: 20,
@@ -2598,12 +2717,14 @@ async function downloadSolarReportPdf() {
     const chartImage = getCanvasDataUrl(createSolarChartExportCanvas(1.7), "A carta solar");
     const modelImages = await captureModel3dReportImages(state);
     const seasonalShadowViews = await captureSeasonalShadowReportViews(state);
+    await waitForReportBrandFont();
+    const brandImage = createReportBrandImage();
     const directSunStats = estimateBlockedDirectSunHours(state);
     const activeLines = getActiveProtectionReportLines(state);
 
     doc.setFillColor(255, 255, 255);
     doc.rect(0, 0, pageW, pageH, "F");
-    addReportHeaderBrand(doc, pageW, margin);
+    addReportHeaderBrand(doc, pageW, margin, brandImage);
 
     addReportText(doc, "Relatório de análise solar", margin, 54, {
       size: 22,
@@ -2668,7 +2789,7 @@ async function downloadSolarReportPdf() {
     doc.addPage();
     doc.setFillColor(255, 255, 255);
     doc.rect(0, 0, pageW, pageH, "F");
-    addReportHeaderBrand(doc, pageW, margin);
+    addReportHeaderBrand(doc, pageW, margin, brandImage);
     addReportText(doc, "Carta solar e desempenho", margin, 54, {
       size: 20,
       style: "bold",
@@ -2710,7 +2831,7 @@ async function downloadSolarReportPdf() {
     });
 
     addReportFooter(doc, pageW, pageH, margin, reportDate);
-    addSeasonalShadowReportPage(doc, seasonalShadowViews, pageW, pageH, margin, reportDate);
+    addSeasonalShadowReportPage(doc, seasonalShadowViews, pageW, pageH, margin, reportDate, brandImage);
 
     const filename = `relatorio-solar-${getSafeFilePart(state.local.cidade)}-${new Date().toISOString().slice(0, 10)}.pdf`;
     doc.save(filename);
@@ -2857,6 +2978,8 @@ function initTabs() {
 function bindInputs() {
   const inputs = document.querySelectorAll("input");
   inputs.forEach((input) => {
+    if (input.type === "file") return;
+
     input.addEventListener("input", () => {
       if (input === refs.shadowDate || input === refs.shadowTime) {
         renderWindowShadow();
@@ -2928,8 +3051,26 @@ function bindInputs() {
 
   refs.canvas.addEventListener("mousemove", updateShadowPointTooltip);
   refs.canvas.addEventListener("mouseleave", hideShadowPointTooltip);
-  refs.downloadSolarChart.addEventListener("click", downloadSolarChartImage);
-  refs.downloadSolarReport.addEventListener("click", downloadSolarReportPdf);
+  refs.chartActionsButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleChartActionsMenu();
+  });
+  refs.chartActionsMenu.addEventListener("click", (event) => {
+    event.stopPropagation();
+  });
+  refs.downloadSolarChart.addEventListener("click", () => {
+    closeChartActionsMenu();
+    downloadSolarChartImage();
+  });
+  refs.downloadSolarReport.addEventListener("click", () => {
+    closeChartActionsMenu();
+    downloadSolarReportPdf();
+  });
+  refs.saveProject.addEventListener("click", downloadProjectFile);
+  refs.loadProject.addEventListener("click", openProjectFilePicker);
+  refs.projectFileInput.addEventListener("change", () => {
+    loadProjectFromFile(refs.projectFileInput.files && refs.projectFileInput.files[0]);
+  });
   refs.updateMaskButton.addEventListener("click", updateMaskFromUserAction);
   refs.resetModel3dView.addEventListener("click", resetModel3dView);
   refs.resetModel3dViewModal.addEventListener("click", resetModel3dView);
@@ -2957,13 +3098,19 @@ function bindInputs() {
     if (event.key === "Escape" && refs.windowShadowModal.classList.contains("open")) {
       closeWindowShadowModal();
     }
+    if (event.key === "Escape") {
+      closeChartActionsMenu();
+    }
+  });
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest(".action-menu")) {
+      closeChartActionsMenu();
+    }
   });
 }
 
 function initApp() {
-  const selected = refs.capitalSelector.value;
-  refs.cidade.disabled = selected !== "custom";
-  refs.latitude.disabled = selected !== "custom";
+  syncLocalFieldLocks();
 
   if (!didRestoreConfig) refs.shadowDate.value = getDayOfYear(new Date());
 }

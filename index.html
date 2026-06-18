@@ -351,8 +351,18 @@
               <p><strong>Cidade:</strong> <span id="cidade-display">São Paulo</span> | <strong>Latitude:</strong> <span id="lat-display">-23.55°</span></p>
             </div>
             <div class="chart-actions" data-export-ignore>
-              <button class="export-button" id="download-solar-chart" type="button">Baixar imagem</button>
-              <button class="export-button" id="download-solar-report" type="button">Baixar relatório</button>
+              <div class="action-menu">
+                <button class="export-button action-menu-button" id="chart-actions-button" type="button" aria-haspopup="true" aria-expanded="false">
+                  Ações
+                </button>
+                <div class="action-menu-list" id="chart-actions-menu" role="menu" aria-hidden="true">
+                  <button type="button" id="download-solar-chart" role="menuitem">Baixar imagem</button>
+                  <button type="button" id="download-solar-report" role="menuitem">Baixar relatório</button>
+                  <button type="button" id="save-project" role="menuitem">Salvar projeto</button>
+                  <button type="button" id="load-project" role="menuitem">Carregar projeto</button>
+                </div>
+                <input id="project-file-input" type="file" accept="application/json,.json" hidden />
+              </div>
             </div>
           </div>
           <div class="chart-canvas-row">

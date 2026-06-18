@@ -530,6 +530,53 @@ input[type="range"] {
   gap: 8px;
 }
 
+.action-menu {
+  position: relative;
+}
+
+.action-menu-button {
+  min-width: 92px;
+}
+
+.action-menu-list {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 6;
+  min-width: 178px;
+  display: none;
+  padding: 6px;
+  border: 1px solid #d5c3a9;
+  border-radius: 10px;
+  background: #fffdf9;
+  box-shadow: 0 16px 36px rgba(52, 37, 22, 0.18);
+}
+
+.action-menu.open .action-menu-list {
+  display: grid;
+  gap: 2px;
+}
+
+.action-menu-list button {
+  width: 100%;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #3f342b;
+  padding: 9px 10px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+}
+
+.action-menu-list button:hover,
+.action-menu-list button:focus-visible {
+  outline: none;
+  background: #fff1e7;
+  color: var(--accent);
+}
+
 .export-button {
   flex: 0 0 auto;
   border: 1px solid var(--accent);
