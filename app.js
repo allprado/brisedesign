@@ -292,7 +292,7 @@ function solarPositionFromDecHour(latitudeDeg, declinationDeg, hourAngleDeg) {
   const dec = declinationDeg * DEG;
   const h = hourAngleDeg * DEG;
 
-  const east = Math.cos(dec) * Math.sin(h);
+  const east = -Math.cos(dec) * Math.sin(h);
   const north = Math.cos(lat) * Math.sin(dec) - Math.sin(lat) * Math.cos(dec) * Math.cos(h);
   const up = Math.sin(lat) * Math.sin(dec) + Math.cos(lat) * Math.cos(dec) * Math.cos(h);
 
@@ -307,7 +307,7 @@ function solarPositionOnHorizon(latitudeDeg, declinationDeg, hourAngleDeg) {
   const lat = latitudeDeg * DEG;
   const dec = declinationDeg * DEG;
   const h = hourAngleDeg * DEG;
-  const east = Math.cos(dec) * Math.sin(h);
+  const east = -Math.cos(dec) * Math.sin(h);
   const north = Math.cos(lat) * Math.sin(dec) - Math.sin(lat) * Math.cos(dec) * Math.cos(h);
   const azimuth = (Math.atan2(east, north) / DEG + 360) % 360;
 
