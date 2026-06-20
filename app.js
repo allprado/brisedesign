@@ -3249,8 +3249,6 @@ function drawSolarChart(state, { updateMask = true } = {}) {
   const radius = Math.min(width, height) * 0.44;
 
   drawBaseChart(center, radius);
-  drawSolarDatePaths(state, center, radius);
-  drawHourLines(state, center, radius);
   const shouldCalculateMask = updateMask || !lastMaskSamples.length;
   const stats = shouldCalculateMask
     ? drawShadeMask(state, center, radius)
@@ -3262,6 +3260,8 @@ function drawSolarChart(state, { updateMask = true } = {}) {
     maskNeedsUpdate = false;
     setMaskUpdateOverlay(false);
   }
+  drawSolarDatePaths(state, center, radius);
+  drawHourLines(state, center, radius);
   drawSolarMonthLabels(state, center, radius);
   drawFacadePlaneLine(state, center, radius);
   drawFacadeDirection(state, center, radius);
