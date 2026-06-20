@@ -40,8 +40,14 @@ const refs = {
   resumo: document.getElementById("resumo"),
   canvas: document.getElementById("solar-canvas"),
   shadowPointTooltip: document.getElementById("shadow-point-tooltip"),
+  solarChartLoadingOverlay: document.getElementById("solar-chart-loading-overlay"),
   maskUpdateOverlay: document.getElementById("mask-update-overlay"),
   updateMaskButton: document.getElementById("update-mask-button"),
+  shadeMin: document.getElementById("shade-min"),
+  shadeMax: document.getElementById("shade-max"),
+  shadeMinDisplay: document.getElementById("shade-min-display"),
+  shadeMaxDisplay: document.getElementById("shade-max-display"),
+  heatScaleControl: document.querySelector(".heat-scale-control"),
   chartCard: document.querySelector(".chart-card"),
   chartActionsButton: document.getElementById("chart-actions-button"),
   chartActionsMenu: document.getElementById("chart-actions-menu"),
@@ -52,6 +58,7 @@ const refs = {
   projectFileInput: document.getElementById("project-file-input"),
   splashScreen: document.getElementById("splash-screen"),
   uiBlocker: document.getElementById("ui-blocker"),
+  uiBlockerMessage: document.getElementById("ui-blocker-message"),
 
   openWindowShadow: document.getElementById("open-window-shadow"),
   windowShadowModal: document.getElementById("window-shadow-modal"),
@@ -81,6 +88,9 @@ const DEG = Math.PI / 180;
 const MIN_HEATMAP_FRONT_COMPONENT = Math.cos(89.5 * DEG);
 let renderFrame = 0;
 let didRestoreConfig = false;
+let solarChartLoadingFrame = 0;
+let solarCanvasCssSize = 0;
+let solarCanvasDpr = 0;
 const STORAGE_KEY = "briselab:lastConfig";
 const PROJECT_FILE_VERSION = 1;
 const THREE_CDN_URL = "https://unpkg.com/three@0.165.0/build/three.module.js";
@@ -119,6 +129,8 @@ let lastMaskSamples = [];
 let shadeRasterCanvas = null;
 let shadeRasterCtx = null;
 let shadeRasterKey = "";
+const SHADE_FILTER_MIN = 0;
+const SHADE_FILTER_MAX = 100;
 const SOLAR_MONTH_PATHS = [
   { labels: [{ text: "jun", hour: 8 }], declination: 23.44 },
   { labels: [{ text: "mai", hour: 8 }, { text: "jul", hour: 16 }], declination: 20 },
@@ -195,6 +207,51 @@ function getState() {
       sobreposicao: Math.max(0, Number(refs.mqSobreposicao.value) || 0)
     }
   };
+}
+
+function readShadeFilter() {
+  const minValue = Number(refs.shadeMin.value);
+  const maxValue = Number(refs.shadeMax.value);
+  const min = clamp(Math.round(Number.isFinite(minValue) ? minValue : 0), SHADE_FILTER_MIN, SHADE_FILTER_MAX);
+  const max = clamp(Math.round(Number.isFinite(maxValue) ? maxValue : SHADE_FILTER_MAX), SHADE_FILTER_MIN, SHADE_FILTER_MAX);
+  return {
+    min: Math.min(min, max),
+    max: Math.max(min, max)
+  };
+}
+
+function syncShadeFilterControls(changedField = null, options = {}) {
+  const writeValues = options.writeValues !== false;
+  const minValue = Number(refs.shadeMin.value);
+  const maxValue = Number(refs.shadeMax.value);
+  let min = clamp(Math.round(Number.isFinite(minValue) ? minValue : 0), SHADE_FILTER_MIN, SHADE_FILTER_MAX);
+  let max = clamp(Math.round(Number.isFinite(maxValue) ? maxValue : SHADE_FILTER_MAX), SHADE_FILTER_MIN, SHADE_FILTER_MAX);
+
+  if (min > max) {
+    if (changedField === refs.shadeMin) {
+      max = min;
+    } else {
+      min = max;
+    }
+  }
+
+  if (writeValues) {
+    refs.shadeMin.value = String(min);
+    refs.shadeMax.value = String(max);
+  }
+  refs.shadeMinDisplay.textContent = `${min}%`;
+  refs.shadeMaxDisplay.textContent = `${max}%`;
+  refs.shadeMin.setAttribute("aria-valuetext", `${min}%`);
+  refs.shadeMax.setAttribute("aria-valuetext", `${max}%`);
+  refs.heatScaleControl.style.setProperty("--shade-min", `${min}%`);
+  refs.heatScaleControl.style.setProperty("--shade-max", `${max}%`);
+
+  return { min, max };
+}
+
+function isShadeSampleVisible(sample, filter) {
+  const percent = sample.shadeRatio * 100;
+  return percent + 0.001 >= filter.min && percent - 0.001 <= filter.max;
 }
 
 function getPersistableConfig() {
@@ -890,8 +947,10 @@ function drawFacadePlaneLine(state, center, radius) {
   ctx.restore();
 }
 
-function drawShadeMaskSamples(samples, state, center, radius) {
+function drawShadeMaskSamples(samples, state, center, radius, filter = readShadeFilter()) {
   samples.forEach((sample) => {
+    if (!isShadeSampleVisible(sample, filter)) return;
+
     const p = stereographicProject(sample.alt, state.local.orientacao + sample.relativeAz, center, radius);
     const alpha = 0.08 + sample.shadeRatio * 0.5;
     const dotRadius = 1.8 + sample.shadeRatio * 3.2;
@@ -961,10 +1020,13 @@ function getRenderedShadeSampleAt(clientX, clientY) {
   const y = clientY - canvasRect.top;
   const center = { x: canvasRect.width / 2, y: canvasRect.height / 2 };
   const radius = Math.min(canvasRect.width, canvasRect.height) * 0.44;
+  const filter = readShadeFilter();
   let closest = null;
   let closestDistanceSq = Infinity;
 
   lastMaskSamples.forEach((sample) => {
+    if (!isShadeSampleVisible(sample, filter)) return;
+
     const p = stereographicProject(sample.alt, state.local.orientacao + sample.relativeAz, center, radius);
     const dotRadius = 1.8 + sample.shadeRatio * 3.2;
     const hitRadius = Math.max(8, dotRadius + 4);
@@ -1037,8 +1099,30 @@ function setMaskUpdateOverlay(open) {
   refs.maskUpdateOverlay.setAttribute("aria-hidden", open ? "false" : "true");
 }
 
-function setUiBlocked(blocked) {
+function setSolarChartLoading(open) {
+  refs.solarChartLoadingOverlay.classList.toggle("open", open);
+  refs.solarChartLoadingOverlay.setAttribute("aria-hidden", open ? "false" : "true");
+}
+
+function runWithSolarChartLoading(task) {
+  if (solarChartLoadingFrame) cancelAnimationFrame(solarChartLoadingFrame);
+  setSolarChartLoading(true);
+
+  solarChartLoadingFrame = requestAnimationFrame(() => {
+    solarChartLoadingFrame = requestAnimationFrame(() => {
+      solarChartLoadingFrame = 0;
+      try {
+        task();
+      } finally {
+        setSolarChartLoading(false);
+      }
+    });
+  });
+}
+
+function setUiBlocked(blocked, message = "Atualizando máscara de sombra...") {
   isUpdatingMask = blocked;
+  if (blocked) refs.uiBlockerMessage.textContent = message;
   refs.uiBlocker.classList.toggle("open", blocked);
   refs.uiBlocker.setAttribute("aria-hidden", blocked ? "false" : "true");
 }
@@ -2084,6 +2168,7 @@ function downloadProjectFile() {
 function loadProjectFromFile(file) {
   if (!file) return;
 
+  setUiBlocked(true, "Carregando Projeto");
   const reader = new FileReader();
   reader.onload = () => {
     try {
@@ -2097,12 +2182,15 @@ function loadProjectFromFile(file) {
       saveAppConfig();
       render({ updateMask: true });
     } catch (error) {
+      setUiBlocked(false);
       alert(`Não foi possível carregar o projeto.\n\nDetalhe: ${error.message || error}`);
     } finally {
       refs.projectFileInput.value = "";
+      setUiBlocked(false);
     }
   };
   reader.onerror = () => {
+    setUiBlocked(false);
     alert("Não foi possível ler o arquivo de projeto.");
     refs.projectFileInput.value = "";
   };
@@ -2237,6 +2325,62 @@ function drawExportHeatScale(context, parentRect) {
     const tickRect = getRelativeRect(tick, parentRect);
     context.fillText(tick.innerText.trim(), tickRect.x, tickRect.y);
   });
+
+  const filter = readShadeFilter();
+  const drawMarker = (percent, side) => {
+    const label = `${percent}%`;
+
+    context.save();
+    context.fillStyle = "#7b3f2a";
+    context.strokeStyle = "rgba(47, 34, 22, 0.16)";
+    context.lineWidth = 1;
+    context.beginPath();
+
+    if (isHorizontal) {
+      const x = barRect.x + barRect.w * (percent / 100);
+      const y = side === "max" ? barRect.y - 4 : barRect.y + barRect.h + 4;
+      if (side === "max") {
+        context.moveTo(x - 7, y - 8);
+        context.lineTo(x + 7, y - 8);
+        context.lineTo(x, y);
+      } else {
+        context.moveTo(x, y);
+        context.lineTo(x + 7, y + 8);
+        context.lineTo(x - 7, y + 8);
+      }
+      context.closePath();
+      context.fill();
+      context.stroke();
+      context.font = `700 10px ${scaleStyle.fontFamily}`;
+      context.textAlign = "center";
+      context.textBaseline = side === "max" ? "bottom" : "top";
+      context.fillText(label, x, side === "max" ? y - 10 : y + 10);
+    } else {
+      const y = barRect.y + barRect.h * (1 - percent / 100);
+      const x = side === "max" ? barRect.x - 4 : barRect.x + barRect.w + 4;
+      if (side === "max") {
+        context.moveTo(x - 8, y - 7);
+        context.lineTo(x, y);
+        context.lineTo(x - 8, y + 7);
+      } else {
+        context.moveTo(x, y);
+        context.lineTo(x + 8, y - 7);
+        context.lineTo(x + 8, y + 7);
+      }
+      context.closePath();
+      context.fill();
+      context.stroke();
+      context.font = `700 10px ${scaleStyle.fontFamily}`;
+      context.textAlign = side === "max" ? "right" : "left";
+      context.textBaseline = "middle";
+      context.fillText(label, side === "max" ? x - 10 : x + 10, y);
+    }
+
+    context.restore();
+  };
+
+  drawMarker(filter.max, "max");
+  drawMarker(filter.min, "min");
 }
 
 function drawExportLegend(context, parentRect) {
@@ -2843,16 +2987,43 @@ async function downloadSolarReportPdf() {
   }
 }
 
+function updateSolarChartLayoutSize() {
+  const row = refs.canvas.closest(".chart-canvas-row");
+  const scale = refs.chartCard.querySelector(".heat-scale");
+  if (!row) return 1;
+
+  const rowRect = row.getBoundingClientRect();
+  const scaleRect = scale ? scale.getBoundingClientRect() : { width: 0 };
+  const rowStyle = window.getComputedStyle(row);
+  const gap = parseFloat(rowStyle.columnGap) || 0;
+  const isStacked = window.matchMedia("(max-width: 760px)").matches;
+  const availableWidth = Math.max(1, rowRect.width - (isStacked ? 0 : scaleRect.width + gap));
+  const availableHeight = Math.max(1, rowRect.height);
+  const size = Math.floor(Math.min(availableWidth, availableHeight, 860));
+
+  row.style.setProperty("--solar-chart-size", `${size}px`);
+  return size;
+}
+
 function resizeCanvasForDpr() {
   const dpr = window.devicePixelRatio || 1;
+  updateSolarChartLayoutSize();
   const slot = refs.canvas.parentElement;
   const rect = slot.getBoundingClientRect();
   const size = Math.max(1, Math.floor(Math.min(rect.width, rect.height)));
 
-  refs.canvas.style.width = `${size}px`;
-  refs.canvas.style.height = `${size}px`;
-  refs.canvas.width = size * dpr;
-  refs.canvas.height = size * dpr;
+  if (solarCanvasCssSize !== size) {
+    refs.canvas.style.width = `${size}px`;
+    refs.canvas.style.height = `${size}px`;
+  }
+
+  if (solarCanvasCssSize !== size || solarCanvasDpr !== dpr) {
+    refs.canvas.width = size * dpr;
+    refs.canvas.height = size * dpr;
+    solarCanvasCssSize = size;
+    solarCanvasDpr = dpr;
+  }
+
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
@@ -2908,7 +3079,75 @@ function renderOrientationFinal() {
   renderWindowShadow(state);
 }
 
+function updateShadeFilterFromUserAction(input) {
+  syncShadeFilterControls(input, { writeValues: false });
+  hideShadowPointTooltip();
+}
+
+function flushShadeFilterRender(input) {
+  syncShadeFilterControls(input);
+  hideShadowPointTooltip();
+
+  runWithSolarChartLoading(() => {
+    const state = getState();
+    const stats = drawSolarChart(state, { updateMask: false });
+    updateSummary(state, stats);
+  });
+}
+
+function getShadeValueFromPointer(limit, event) {
+  const rect = refs.heatScaleControl.getBoundingClientRect();
+  const isStacked = window.matchMedia("(max-width: 760px)").matches;
+  const raw = isStacked
+    ? ((event.clientX - rect.left) / rect.width) * 100
+    : 100 - ((event.clientY - rect.top) / rect.height) * 100;
+  return clamp(Math.round(raw), SHADE_FILTER_MIN, SHADE_FILTER_MAX);
+}
+
+function setShadeLimitFromPointer(label, event, shouldFlush = false) {
+  const limit = label.dataset.shadeLimit;
+  const input = limit === "max" ? refs.shadeMax : refs.shadeMin;
+  input.value = String(getShadeValueFromPointer(limit, event));
+  syncShadeFilterControls(input, { writeValues: shouldFlush });
+
+  if (shouldFlush) {
+    flushShadeFilterRender(input);
+    saveAppConfig();
+  }
+}
+
+function bindShadeLimitSliders() {
+  refs.heatScaleControl.querySelectorAll(".shade-limit").forEach((label) => {
+    label.addEventListener("click", (event) => {
+      event.preventDefault();
+    });
+
+    label.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      label.setPointerCapture(event.pointerId);
+      setShadeLimitFromPointer(label, event);
+    });
+
+    label.addEventListener("pointermove", (event) => {
+      if (!label.hasPointerCapture(event.pointerId)) return;
+      event.preventDefault();
+      setShadeLimitFromPointer(label, event);
+    });
+
+    const finishDrag = (event) => {
+      if (!label.hasPointerCapture(event.pointerId)) return;
+      event.preventDefault();
+      setShadeLimitFromPointer(label, event, true);
+      label.releasePointerCapture(event.pointerId);
+    };
+
+    label.addEventListener("pointerup", finishDrag);
+    label.addEventListener("pointercancel", finishDrag);
+  });
+}
+
 function render({ updateMask = true } = {}) {
+  syncShadeFilterControls();
   updateBriseSpacingDisplay();
   const state = getState();
   const stats = drawSolarChart(state, { updateMask });
@@ -2936,15 +3175,16 @@ function scheduleRender() {
 
 function updateMaskFromUserAction() {
   if (isUpdatingMask) return;
-  setUiBlocked(true);
-  window.setTimeout(() => {
+  isUpdatingMask = true;
+  setMaskUpdateOverlay(false);
+  runWithSolarChartLoading(() => {
     try {
       render({ updateMask: true });
       saveAppConfig();
     } finally {
-      setUiBlocked(false);
+      isUpdatingMask = false;
     }
-  }, 40);
+  });
 }
 
 function updateBriseSpacingDisplay() {
@@ -2987,6 +3227,11 @@ function bindInputs() {
         return;
       }
 
+      if (input === refs.shadeMin || input === refs.shadeMax) {
+        updateShadeFilterFromUserAction(input);
+        return;
+      }
+
       if (input === refs.orientacao) {
         scheduleOrientationPreview();
         saveAppConfig();
@@ -3000,6 +3245,12 @@ function bindInputs() {
     input.addEventListener("change", () => {
       if (input === refs.shadowDate || input === refs.shadowTime) {
         renderWindowShadow();
+        saveAppConfig();
+        return;
+      }
+
+      if (input === refs.shadeMin || input === refs.shadeMax) {
+        flushShadeFilterRender(input);
         saveAppConfig();
         return;
       }
@@ -3140,7 +3391,9 @@ function initSplashScreen() {
 
 initTabs();
 restoreAppConfig();
+syncShadeFilterControls();
 bindInputs();
+bindShadeLimitSliders();
 initApp();
 render();
 requestAnimationFrame(scheduleRender);

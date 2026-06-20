@@ -369,6 +369,9 @@
             <div class="chart-canvas-slot">
               <canvas id="solar-canvas" width="860" height="860" aria-label="Carta solar"></canvas>
               <div class="shadow-point-tooltip" id="shadow-point-tooltip" aria-hidden="true"></div>
+              <div class="solar-chart-loading-overlay" id="solar-chart-loading-overlay" aria-hidden="true" data-export-ignore>
+                <span>Atualizando Carta Solar</span>
+              </div>
               <div class="mask-update-overlay" id="mask-update-overlay" aria-hidden="true" data-export-ignore>
                 <div>
                   <strong>Máscara desatualizada</strong>
@@ -380,7 +383,17 @@
             <div class="heat-scale" aria-label="Legenda dos graus de sombreamento do mapa de calor">
               <span class="heat-scale-title">Sombreamento</span>
               <div class="heat-scale-body">
-                <div class="heat-scale-bar" aria-hidden="true"></div>
+                <div class="heat-scale-control">
+                  <label class="shade-limit shade-limit-max" data-shade-limit="max">
+                    <input id="shade-max" type="range" min="0" max="100" step="1" value="100" aria-label="Nivel maximo de sombreamento exibido na carta solar" />
+                    <output id="shade-max-display" for="shade-max">100%</output>
+                  </label>
+                  <div class="heat-scale-bar" aria-hidden="true"></div>
+                  <label class="shade-limit shade-limit-min" data-shade-limit="min">
+                    <input id="shade-min" type="range" min="0" max="100" step="1" value="0" aria-label="Nivel minimo de sombreamento exibido na carta solar" />
+                    <output id="shade-min-display" for="shade-min">0%</output>
+                  </label>
+                </div>
                 <div class="heat-scale-ticks">
                   <span>100%</span>
                   <span>75%</span>
@@ -476,7 +489,7 @@
   </div>
 
   <div class="ui-blocker" id="ui-blocker" aria-hidden="true">
-    <div>Atualizando máscara de sombra...</div>
+    <div id="ui-blocker-message">Atualizando máscara de sombra...</div>
   </div>
 
   <script src="app.js"></script>
