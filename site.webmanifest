@@ -1,0 +1,17 @@
+{
+  "name": "BriseLab",
+  "short_name": "BriseLab",
+  "description": "Analise da eficiencia de brises em janelas",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#fffaf2",
+  "theme_color": "#BA4D2D",
+  "icons": [
+    {
+      "src": "assets/BriseLabLogo.png",
+      "sizes": "any",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

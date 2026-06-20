@@ -2464,6 +2464,134 @@ function createSolarChartExportCanvas(scale = 2) {
   return exportCanvas;
 }
 
+function drawReportHeatScale(context, x, y, width, height) {
+  const gradient = context.createLinearGradient(0, y + height, 0, y);
+  const filter = readShadeFilter();
+
+  gradient.addColorStop(0, "rgba(186, 77, 45, 0.12)");
+  gradient.addColorStop(0.34, "rgba(226, 163, 88, 0.38)");
+  gradient.addColorStop(0.66, "rgba(206, 112, 54, 0.56)");
+  gradient.addColorStop(1, "rgba(186, 77, 45, 0.72)");
+
+  context.fillStyle = "#4d473f";
+  context.font = "700 15px 'Sora', 'Segoe UI', sans-serif";
+  context.textBaseline = "top";
+  context.textAlign = "center";
+  context.fillText("Sombreamento", x + width / 2, y - 34);
+
+  context.fillStyle = gradient;
+  drawRoundedRect(context, x, y, width, height, 8);
+  context.fill();
+  context.strokeStyle = "rgba(126, 81, 52, 0.35)";
+  context.lineWidth = 1.2;
+  context.stroke();
+
+  context.font = "700 14px 'IBM Plex Sans', 'Segoe UI', sans-serif";
+  context.fillStyle = "#6b6259";
+  context.textAlign = "left";
+  [100, 75, 50, 25, 0].forEach((tick) => {
+    const tickY = y + height * (1 - tick / 100);
+    context.fillText(`${tick}%`, x + width + 22, tickY - 7);
+  });
+
+  const drawMarker = (percent, side) => {
+    const markerY = y + height * (1 - percent / 100);
+    const markerX = side === "max" ? x - 8 : x + width + 8;
+    context.save();
+    context.fillStyle = "#7b3f2a";
+    context.strokeStyle = "rgba(47, 34, 22, 0.16)";
+    context.lineWidth = 1;
+    context.beginPath();
+    if (side === "max") {
+      context.moveTo(markerX - 11, markerY - 8);
+      context.lineTo(markerX, markerY);
+      context.lineTo(markerX - 11, markerY + 8);
+    } else {
+      context.moveTo(markerX, markerY);
+      context.lineTo(markerX + 11, markerY - 8);
+      context.lineTo(markerX + 11, markerY + 8);
+    }
+    context.closePath();
+    context.fill();
+    context.stroke();
+    context.font = "700 13px 'IBM Plex Sans', 'Segoe UI', sans-serif";
+    context.textBaseline = "middle";
+    context.textAlign = side === "max" ? "right" : "left";
+    context.fillText(`${percent}%`, side === "max" ? markerX - 14 : markerX + 14, markerY);
+    context.restore();
+  };
+
+  drawMarker(filter.max, "max");
+  drawMarker(filter.min, "min");
+}
+
+function drawReportLegend(context, x, y) {
+  const items = [
+    { color: "#c8baa5", text: "Grade estereogrÃ¡fica" },
+    { color: "#0f5f7a", text: "TrajetÃ³rias solares (meses)" },
+    { color: "#4c9464", text: "Linhas horÃ¡rias" },
+    { color: "#7b1f1b", text: "Linha da fachada" },
+    { color: "#d58c73", text: "Mapa de calor da Ã¡rea sombreada" }
+  ];
+  let cursorX = x;
+
+  context.font = "500 14px 'IBM Plex Sans', 'Segoe UI', sans-serif";
+  context.textBaseline = "middle";
+  context.fillStyle = "#635a50";
+
+  items.forEach((item) => {
+    context.fillStyle = item.color;
+    drawRoundedRect(context, cursorX, y - 6, 18, 12, 4);
+    context.fill();
+    context.fillStyle = "#635a50";
+    context.fillText(item.text, cursorX + 26, y);
+    cursorX += context.measureText(item.text).width + 54;
+  });
+}
+
+function createSolarChartReportCanvas(scale = 2) {
+  const width = 1200;
+  const height = 900;
+  const exportCanvas = document.createElement("canvas");
+  const exportCtx = exportCanvas.getContext("2d");
+  const header = refs.chartCard.querySelector(".chart-head");
+  const title = header.querySelector("h2").innerText.trim();
+  const subtitle = header.querySelector("p").innerText.trim();
+  const chartSize = 680;
+  const chartX = 76;
+  const chartY = 118;
+
+  exportCanvas.width = width * scale;
+  exportCanvas.height = height * scale;
+  exportCtx.scale(scale, scale);
+
+  drawExportCardBackground(exportCtx, width, height);
+  exportCtx.fillStyle = "#24201c";
+  exportCtx.font = "700 24px 'Sora', 'Segoe UI', sans-serif";
+  exportCtx.textBaseline = "top";
+  exportCtx.fillText(title, 36, 32);
+  exportCtx.fillStyle = "#676058";
+  exportCtx.font = "600 15px 'IBM Plex Sans', 'Segoe UI', sans-serif";
+  exportCtx.fillText(subtitle, 36, 66);
+
+  exportCtx.save();
+  drawRoundedRect(exportCtx, chartX, chartY, chartSize, chartSize, 16);
+  exportCtx.clip();
+  exportCtx.fillStyle = "#fff8f0";
+  exportCtx.fillRect(chartX, chartY, chartSize, chartSize);
+  exportCtx.drawImage(refs.canvas, chartX, chartY, chartSize, chartSize);
+  exportCtx.restore();
+  exportCtx.strokeStyle = "#d4c6b3";
+  exportCtx.lineWidth = 1.2;
+  drawRoundedRect(exportCtx, chartX, chartY, chartSize, chartSize, 16);
+  exportCtx.stroke();
+
+  drawReportHeatScale(exportCtx, 850, 176, 24, 548);
+  drawReportLegend(exportCtx, 76, 835);
+
+  return exportCanvas;
+}
+
 function downloadSolarChartImage() {
   render();
 
@@ -2550,6 +2678,62 @@ function getActiveProtectionReportLines(state) {
   return lines.length ? lines : ["Nenhuma proteção ativa"];
 }
 
+function getProtectionReportSections(state) {
+  const h = state.briseHorizontal;
+  const left = state.briseVertical.esquerdo;
+  const right = state.briseVertical.direito;
+  const mq = state.marquise;
+
+  const horizontalLines = h.ativo
+    ? [
+      `Lâminas: ${h.numero}`,
+      `Espaç. vertical: ${h.espacamento.toFixed(2)} m`,
+      `Ângulo: ${h.angulo.toFixed(1)}°`,
+      `Dist. janela: ${h.distancia.toFixed(2)} m`,
+      `Profundidade: ${h.profundidade.toFixed(2)} m`,
+      `Espessura: ${h.espessura.toFixed(2)} m`,
+      `Afast. topo: ${h.offsetTopo.toFixed(2)} m`,
+      `Sobrep. lateral: ${h.sobreposicao.toFixed(2)} m`
+    ]
+    : ["Não ativo"];
+
+  const verticalLines = [];
+  if (left.ativo) {
+    verticalLines.push(
+      "Esquerdo",
+      `Proj.: ${left.projecao.toFixed(2)} m`,
+      `Esp.: ${left.espessura.toFixed(2)} m`,
+      `Afast.: ${left.offset.toFixed(2)} m`,
+      `Sobrep. sup.: ${left.top.toFixed(2)} m`
+    );
+  }
+  if (right.ativo) {
+    verticalLines.push(
+      "Direito",
+      `Proj.: ${right.projecao.toFixed(2)} m`,
+      `Esp.: ${right.espessura.toFixed(2)} m`,
+      `Afast.: ${right.offset.toFixed(2)} m`,
+      `Sobrep. sup.: ${right.top.toFixed(2)} m`
+    );
+  }
+  if (!verticalLines.length) verticalLines.push("Não ativo");
+
+  const marquiseLines = mq.ativo
+    ? [
+      `Afast. topo: ${mq.offsetTopo.toFixed(2)} m`,
+      `Projeção: ${mq.projecao.toFixed(2)} m`,
+      `Espessura: ${mq.espessura.toFixed(2)} m`,
+      `Sobrep. lateral: ${mq.sobreposicao.toFixed(2)} m`
+    ]
+    : ["Não ativa"];
+
+  return [
+    { title: "Brise horizontal", lines: horizontalLines },
+    { title: "Brise vertical", lines: verticalLines },
+    { title: "Marquise", lines: marquiseLines }
+  ];
+}
+
 function addReportText(doc, text, x, y, options = {}) {
   const size = options.size || 10;
   const color = options.color || [57, 53, 47];
@@ -2594,6 +2778,36 @@ function addReportWrappedLines(doc, lines, x, y, maxWidth, lineHeight = 13) {
     cursorY += wrapped.length * lineHeight + (isHeading ? 3 : 0);
   });
   return cursorY;
+}
+
+function addReportProtectionColumns(doc, sections, x, y, width, maxHeight) {
+  const gap = 12;
+  const columnWidth = (width - gap * 2) / 3;
+  const headingSize = 8.4;
+  const bodySize = 6.7;
+  const lineHeight = 6.7;
+
+  sections.forEach((section, index) => {
+    const columnX = x + index * (columnWidth + gap);
+    let cursorY = y;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(headingSize);
+    doc.setTextColor(62, 52, 43);
+    doc.text(section.title, columnX, cursorY);
+    cursorY += 9;
+
+    section.lines.forEach((line) => {
+      const isSubheading = ["Esquerdo", "Direito"].includes(line);
+      doc.setFont("helvetica", isSubheading ? "bold" : "normal");
+      doc.setFontSize(isSubheading ? 7.6 : bodySize);
+      doc.setTextColor(isSubheading ? 62 : 73, isSubheading ? 52 : 67, isSubheading ? 43 : 57);
+
+      const wrapped = doc.splitTextToSize(line, columnWidth);
+      doc.text(wrapped, columnX, cursorY);
+      cursorY += wrapped.length * lineHeight + (isSubheading ? 0.8 : 0);
+    });
+  });
 }
 
 function addOrientationDiagram(doc, state, cx, cy, radius) {
@@ -2858,13 +3072,13 @@ async function downloadSolarReportPdf() {
       month: "long",
       year: "numeric"
     });
-    const chartImage = getCanvasDataUrl(createSolarChartExportCanvas(1.7), "A carta solar");
+    const chartImage = getCanvasDataUrl(createSolarChartReportCanvas(1.7), "A carta solar");
     const modelImages = await captureModel3dReportImages(state);
     const seasonalShadowViews = await captureSeasonalShadowReportViews(state);
     await waitForReportBrandFont();
     const brandImage = createReportBrandImage();
     const directSunStats = estimateBlockedDirectSunHours(state);
-    const activeLines = getActiveProtectionReportLines(state);
+    const protectionSections = getProtectionReportSections(state);
 
     doc.setFillColor(255, 255, 255);
     doc.rect(0, 0, pageW, pageH, "F");
@@ -2927,7 +3141,7 @@ async function downloadSolarReportPdf() {
 
     addReportCard(doc, margin, 643, contentW, 142);
     addReportSectionTitle(doc, "Proteções ativas", margin + 18, 665);
-    addReportWrappedLines(doc, activeLines, margin + 18, 695, contentW - 36, 11.5);
+    addReportProtectionColumns(doc, protectionSections, margin + 18, 690, contentW - 36, 82);
     addReportFooter(doc, pageW, pageH, margin, reportDate);
 
     doc.addPage();
