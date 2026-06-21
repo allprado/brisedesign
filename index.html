@@ -372,7 +372,7 @@
               <canvas id="solar-canvas" width="860" height="860" aria-label="Carta solar"></canvas>
               <div class="shadow-point-tooltip" id="shadow-point-tooltip" aria-hidden="true"></div>
               <div class="solar-chart-loading-overlay" id="solar-chart-loading-overlay" aria-hidden="true" data-export-ignore>
-                <span>Atualizando Carta Solar</span>
+                <span class="loading-message">Atualizando Carta Solar<span class="loading-dots" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span></span>
               </div>
               <div class="mask-update-overlay" id="mask-update-overlay" aria-hidden="true" data-export-ignore>
                 <div>
@@ -491,7 +491,7 @@
   </div>
 
   <div class="ui-blocker" id="ui-blocker" aria-hidden="true">
-    <div id="ui-blocker-message">Atualizando máscara de sombra...</div>
+    <div><span id="ui-blocker-message">Atualizando máscara de sombra</span><span class="loading-dots" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span></div>
   </div>
 
   <script src="app.js"></script>

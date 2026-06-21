@@ -731,7 +731,10 @@ function getWindowShadeRatioForSolarPosition(altitudeDeg, azimuthDeg, state, col
 }
 
 function drawBaseChart(center, radius) {
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, refs.canvas.width, refs.canvas.height);
+  ctx.restore();
 
   ctx.save();
   ctx.fillStyle = "#fffdf9";
@@ -1120,7 +1123,7 @@ function runWithSolarChartLoading(task) {
   });
 }
 
-function setUiBlocked(blocked, message = "Atualizando máscara de sombra...") {
+function setUiBlocked(blocked, message = "Atualizando máscara de sombra") {
   isUpdatingMask = blocked;
   if (blocked) refs.uiBlockerMessage.textContent = message;
   refs.uiBlocker.classList.toggle("open", blocked);
